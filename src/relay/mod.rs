@@ -63,6 +63,16 @@ pub async fn download_share(
     Ok(share.payload)
 }
 
+pub async fn acknowledge_share(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> Result<impl IntoResponse> {
+    state.db.delete_share(&id)
+        .map_err(|e| Error::Internal(e.to_string()))?;
+
+    Ok(StatusCode::OK)
+}
+
 pub async fn revoke_share(
     State(state): State<Arc<AppState>>,
     TypedHeader(auth): TypedHeader<Authorization<Bearer>>,

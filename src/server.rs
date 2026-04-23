@@ -78,6 +78,7 @@ pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener
         .route("/pairing/:session_id/poll", get(crate::pairing::poll_pairing))
         .route("/shares", post(crate::relay::upload_share))
         .route("/shares/:id", get(crate::relay::download_share).delete(crate::relay::revoke_share))
+        .route("/shares/:id/acknowledge", post(crate::relay::acknowledge_share))
         .route("/metrics", get(metrics_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
