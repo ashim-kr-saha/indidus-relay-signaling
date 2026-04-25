@@ -2,6 +2,7 @@ use crate::models::user::{AuditLogEntry, DeviceResponse};
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use mini_moka::sync::Cache;
 use std::path::Path;
 use tracing::info;
 
@@ -15,6 +16,7 @@ pub struct ShareData {
     pub view_count: i32,
 }
 
+#[derive(Clone, Debug)]
 pub struct IdentityInfo {
     pub id: String,
     pub username: String,
@@ -23,13 +25,18 @@ pub struct IdentityInfo {
 #[derive(Clone)]
 pub struct Db {
     pool: DbPool,
+    identity_cache: Cache<Vec<u8>, Option<IdentityInfo>>,
 }
 
 impl Db {
     pub fn open<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::file(path);
         let pool = Pool::new(manager)?;
-        let db = Self { pool };
+        let identity_cache = Cache::builder()
+            .max_capacity(1000)
+            .time_to_idle(std::time::Duration::from_secs(300))
+            .build();
+        let db = Self { pool, identity_cache };
         db.init_schema()?;
         Ok(db)
     }
@@ -37,6 +44,16 @@ impl Db {
     fn init_schema(&self) -> anyhow::Result<()> {
         info!("Initializing database schema...");
         let conn = self.pool.get()?;
+
+        // Performance optimizations for SQLite
+        conn.execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA cache_size = -2000; -- 2MB
+        ",
+        )?;
 
         conn.execute_batch(
             "
@@ -134,6 +151,7 @@ impl Db {
             "INSERT INTO identities (id, username, root_public_key) VALUES (?1, ?2, ?3)",
             (&id, username, root_public_key),
         )?;
+        self.identity_cache.invalidate(&root_public_key.to_vec());
         Ok(id)
     }
 
@@ -179,6 +197,7 @@ impl Db {
             "INSERT INTO devices (id, identity_id, public_key, name) VALUES (?1, ?2, ?3, ?4)",
             (&id, identity_id, public_key, name),
         )?;
+        self.identity_cache.invalidate(&public_key.to_vec());
         Ok(id)
     }
 
@@ -208,6 +227,24 @@ impl Db {
     }
 
     pub fn get_identity_by_public_key(
+        &self,
+        public_key: &[u8],
+    ) -> anyhow::Result<Option<IdentityInfo>> {
+        let key = public_key.to_vec();
+        // Check cache first
+        if let Some(cached) = self.identity_cache.get(&key) {
+            return Ok(cached);
+        }
+
+        let info = self.get_identity_by_public_key_db(public_key)?;
+        
+        // Cache the result (even if None, to prevent repetitive negative lookups)
+        self.identity_cache.insert(key, info.clone());
+        
+        Ok(info)
+    }
+
+    fn get_identity_by_public_key_db(
         &self,
         public_key: &[u8],
     ) -> anyhow::Result<Option<IdentityInfo>> {
@@ -249,10 +286,16 @@ impl Db {
 
     pub fn delete_device(&self, device_id: &str, identity_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
+        
+        // We don't know the public key here without querying, 
+        // so for security we clear the whole identity cache or 
+        // just let it expire. Since device deletion is rare, 
+        // clearing is safest.
         conn.execute(
             "DELETE FROM devices WHERE id = ?1 AND identity_id = ?2",
             [device_id, identity_id],
         )?;
+        self.identity_cache.invalidate_all();
         Ok(())
     }
 

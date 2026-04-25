@@ -77,6 +77,8 @@ fs2 = "0.4"
 secrecy = { version = "0.8", features = ["serde"] }
 zeroize = { version = "1.7", features = ["serde"] }
 dashmap = "6.0"
+mini-moka = "0.10"
+mimalloc = { version = "0.1", default-features = false }
 
 [dev-dependencies]
 reqwest = { version = "0.12", features = ["json", "blocking"] }
