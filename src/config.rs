@@ -1,6 +1,6 @@
+use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use crate::{Result, Error};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -31,7 +31,7 @@ impl Default for Config {
             relay: RelayConfig {
                 storage_path: "./data/shares".to_string(),
                 max_share_size: 10 * 1024 * 1024, // 10MB
-                default_ttl: 3600, // 1 hour
+                default_ttl: 3600,                // 1 hour
             },
         }
     }

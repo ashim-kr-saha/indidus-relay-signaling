@@ -1,7 +1,7 @@
 use crate::{Error, Result, server::AppState};
 use axum::{
-    extract::{State, Path},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -32,8 +32,10 @@ pub async fn initiate_pairing(
     Json(payload): Json<InitiatePairingRequest>,
 ) -> Result<Json<InitiatePairingResponse>> {
     let session_id = Uuid::new_v4().to_string();
-    state.pairing_sessions.insert(session_id.clone(), (payload.message, None));
-    
+    state
+        .pairing_sessions
+        .insert(session_id.clone(), (payload.message, None));
+
     Ok(Json(InitiatePairingResponse { session_id }))
 }
 

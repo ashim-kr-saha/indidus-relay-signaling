@@ -1,6 +1,6 @@
 use crate::{Error, Result, server::AppState};
 use axum::{
-    extract::{State, Json, Path},
+    extract::{Json, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -25,12 +25,13 @@ pub async fn register_device(
 ) -> Result<impl IntoResponse> {
     let method_str = method.as_str();
     let path = uri.path();
-    
-    let payload: RegisterDeviceRequest = serde_json::from_slice(&body)
-        .map_err(|e| Error::BadRequest(e.to_string()))?;
 
-    let identity_id = crate::auth::authenticate_identity(&state, &headers, method_str, path, &body).await?;
-    
+    let payload: RegisterDeviceRequest =
+        serde_json::from_slice(&body).map_err(|e| Error::BadRequest(e.to_string()))?;
+
+    let identity_id =
+        crate::auth::authenticate_identity(&state, &headers, method_str, path, &body).await?;
+
     if identity_id != payload.identity_id {
         return Err(Error::Auth("Identity mismatch".to_string()));
     }
@@ -40,10 +41,15 @@ pub async fn register_device(
 
     let id = identity_id.clone();
     let name = payload.name.clone();
-    let device_id = state.db_call(move |db| db.create_device(&id, &pk_bytes, name.as_deref())).await
+    let device_id = state
+        .db_call(move |db| db.create_device(&id, &pk_bytes, name.as_deref()))
+        .await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": device_id }))))
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": device_id })),
+    ))
 }
 
 pub async fn list_devices(
@@ -52,10 +58,14 @@ pub async fn list_devices(
     method: axum::http::Method,
     uri: axum::http::Uri,
 ) -> Result<impl IntoResponse> {
-    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
-    
+    let identity_id =
+        crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
+            .await?;
+
     let id = identity_id.clone();
-    let devices = state.db_call(move |db| db.get_devices_by_identity(&id)).await
+    let devices = state
+        .db_call(move |db| db.get_devices_by_identity(&id))
+        .await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(devices))
@@ -68,14 +78,16 @@ pub async fn revoke_device(
     uri: axum::http::Uri,
     Path(device_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
-    
+    let identity_id =
+        crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
+            .await?;
+
     let d_id = device_id.clone();
     let id = identity_id.clone();
-    state.db_call(move |db| db.delete_device(&d_id, &id)).await
+    state
+        .db_call(move |db| db.delete_device(&d_id, &id))
+        .await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
-
-

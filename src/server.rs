@@ -1,18 +1,18 @@
-use crate::{Config, db::Db, viewer, signaling::SignalingMessage};
+use crate::{Config, db::Db, signaling::SignalingMessage, viewer};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
 use axum::{
-    routing::{get, post, delete},
     Router,
     extract::State,
     response::IntoResponse,
+    routing::{delete, get, post},
 };
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 use tower_http::trace::TraceLayer;
-use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 pub struct AppState {
     pub config: Config,
@@ -39,13 +39,15 @@ impl AppState {
         })
     }
 
-    pub async fn db_call<F, R>(&self, f: F) -> R 
-    where 
+    pub async fn db_call<F, R>(&self, f: F) -> R
+    where
         F: FnOnce(&Db) -> R + Send + 'static,
-        R: Send + 'static
+        R: Send + 'static,
     {
         let db = self.db.clone();
-        tokio::task::spawn_blocking(move || f(&db)).await.expect("DB task panicked")
+        tokio::task::spawn_blocking(move || f(&db))
+            .await
+            .expect("DB task panicked")
     }
 }
 
@@ -61,28 +63,65 @@ pub fn create_app(state: Arc<AppState>) -> Router {
 
     Router::new()
         .route("/health", get(health_check))
-        .route("/register", post(crate::auth::register_identity).layer(GovernorLayer { config: governor_config.clone() }))
-        .route("/devices", post(crate::devices::register_device).get(crate::devices::list_devices))
+        .route(
+            "/register",
+            post(crate::auth::register_identity).layer(GovernorLayer {
+                config: governor_config.clone(),
+            }),
+        )
+        .route(
+            "/devices",
+            post(crate::devices::register_device).get(crate::devices::list_devices),
+        )
         .route("/devices/:id", post(crate::devices::revoke_device))
-        .route("/friends", post(crate::friends::send_friend_request).get(crate::friends::list_friends))
-        .route("/friends/accept/:username", post(crate::friends::accept_friend_request))
+        .route(
+            "/friends",
+            post(crate::friends::send_friend_request).get(crate::friends::list_friends),
+        )
+        .route(
+            "/friends/accept/:username",
+            post(crate::friends::accept_friend_request),
+        )
         .route("/friends/:username", delete(crate::friends::remove_friend))
         .route("/turn", get(crate::turn::get_turn_credentials))
         .route("/audit", get(crate::audit::get_audit_logs))
         .route("/push/:device_id", get(crate::push::push_stream))
         .route("/vaults/invite", post(crate::vaults::invite_to_vault))
         .route("/vaults/invites", get(crate::vaults::list_vault_invites))
-        .route("/vaults/invites/:id/accept", post(crate::vaults::accept_vault_invite))
-        .route("/vaults/:id/members", get(crate::vaults::list_vault_members))
+        .route(
+            "/vaults/invites/:id/accept",
+            post(crate::vaults::accept_vault_invite),
+        )
+        .route(
+            "/vaults/:id/members",
+            get(crate::vaults::list_vault_members),
+        )
         .route("/ws", get(crate::signaling::ws_handler))
         .route("/mailbox", post(crate::mailbox::enqueue_message))
         .route("/mailbox/:device_id", get(crate::mailbox::get_mailbox))
-        .route("/pairing/initiate", post(crate::pairing::initiate_pairing).layer(GovernorLayer { config: governor_config.clone() }))
-        .route("/pairing/:session_id/respond", post(crate::pairing::respond_pairing))
-        .route("/pairing/:session_id/poll", get(crate::pairing::poll_pairing))
+        .route(
+            "/pairing/initiate",
+            post(crate::pairing::initiate_pairing).layer(GovernorLayer {
+                config: governor_config.clone(),
+            }),
+        )
+        .route(
+            "/pairing/:session_id/respond",
+            post(crate::pairing::respond_pairing),
+        )
+        .route(
+            "/pairing/:session_id/poll",
+            get(crate::pairing::poll_pairing),
+        )
         .route("/shares", post(crate::relay::upload_share))
-        .route("/shares/:id", get(crate::relay::download_share).delete(crate::relay::revoke_share))
-        .route("/shares/:id/acknowledge", post(crate::relay::acknowledge_share))
+        .route(
+            "/shares/:id",
+            get(crate::relay::download_share).delete(crate::relay::revoke_share),
+        )
+        .route(
+            "/shares/:id/acknowledge",
+            post(crate::relay::acknowledge_share),
+        )
         .route("/v/:id", get(viewer::serve_viewer))
         .route("/pkg/*path", get(viewer::static_handler))
         .route("/metrics", get(metrics_handler))
@@ -96,12 +135,19 @@ pub async fn run(config: Config) -> anyhow::Result<()> {
     run_with_listener(config, listener).await
 }
 
-pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+pub async fn run_with_listener(
+    config: Config,
+    listener: tokio::net::TcpListener,
+) -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(config)?);
     let app = create_app(state);
 
     tracing::info!("Starting server on {}", listener.local_addr()?);
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

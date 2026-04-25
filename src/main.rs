@@ -1,6 +1,6 @@
+use clap::Parser;
 use indidus_relay_signaling::{Config, server};
 use std::path::Path;
-use clap::Parser;
 use std::process::ExitCode;
 use tracing_subscriber::EnvFilter;
 
@@ -30,7 +30,10 @@ async fn main() -> ExitCode {
         }
     };
 
-    tracing::info!("Starting Indidus Relay & Signaling Server v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!(
+        "Starting Indidus Relay & Signaling Server v{}",
+        env!("CARGO_PKG_VERSION")
+    );
 
     if let Err(e) = server::run(config).await {
         tracing::error!("Server error: {e}");
@@ -43,8 +46,7 @@ async fn main() -> ExitCode {
 fn init_logging(level: &str) {
     use tracing_subscriber::{fmt, prelude::*};
 
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(level));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(level));
 
     tracing_subscriber::registry()
         .with(filter)

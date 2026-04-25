@@ -1,3 +1,3 @@
 pub mod user;
 
-pub use user::{User, Session};
+pub use user::{Session, User};

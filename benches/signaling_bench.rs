@@ -1,17 +1,21 @@
-use criterion::{criterion_group, criterion_main, Criterion};
-use indidus_relay_signaling::{server::AppState, Config, signaling::{route_message, SignalingMessage}};
+use criterion::{Criterion, criterion_group, criterion_main};
+use indidus_relay_signaling::{
+    Config,
+    server::AppState,
+    signaling::{SignalingMessage, route_message},
+};
 use std::sync::Arc;
-use tokio::sync::mpsc;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc;
 
 fn bench_signaling_routing(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     // Setup AppState with 1000 "online" peers
     let mut config = Config::default();
     config.database.path = ":memory:".to_string();
     let state = Arc::new(AppState::new(config).unwrap());
-    
+
     let mut peer_ids = Vec::new();
     for i in 0..1000 {
         let device_id = format!("device_{}", i);
@@ -29,9 +33,7 @@ fn bench_signaling_routing(c: &mut Criterion) {
 
     c.bench_function("route_message_1000_peers", |b| {
         b.iter(|| {
-            rt.block_on(async {
-                route_message(&state, target_id.clone(), msg.clone()).await
-            })
+            rt.block_on(async { route_message(&state, target_id.clone(), msg.clone()).await })
         })
     });
 }

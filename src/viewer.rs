@@ -1,11 +1,11 @@
-use rust_embed::RustEmbed;
 use axum::{
     body::Body,
     extract::Path,
-    http::{header, StatusCode, Response},
+    http::{Response, StatusCode, header},
     response::IntoResponse,
 };
 use mime_guess;
+use rust_embed::RustEmbed;
 
 #[derive(RustEmbed)]
 #[folder = "assets/"]

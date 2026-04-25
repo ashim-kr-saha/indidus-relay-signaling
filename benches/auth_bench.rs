@@ -1,20 +1,20 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use ed25519_dalek::{Signer, SigningKey};
 use indidus_relay_signaling::auth::validate_request_signature;
-use ed25519_dalek::{SigningKey, Signer};
-use sha2::{Sha256, Digest};
 use rand::thread_rng;
+use sha2::{Digest, Sha256};
 
 fn bench_auth_validation(c: &mut Criterion) {
     let mut rng = thread_rng();
     let signing_key = SigningKey::generate(&mut rng);
     let public_key = signing_key.verifying_key();
     let pk_bytes = public_key.as_bytes();
-    
+
     let method = "POST";
     let path = "/api/test/path/long/enough/to/be/realistic";
     let timestamp = "1714077600"; // Fixed timestamp
     let body = vec![0u8; 1024]; // 1KB body
-    
+
     // Pre-calculate signature
     let mut hasher = Sha256::new();
     hasher.update(&body);

@@ -1,9 +1,9 @@
+use crate::models::user::{AuditLogEntry, DeviceResponse};
+use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use std::path::Path;
 use tracing::info;
-use chrono::{DateTime, Utc};
-use crate::models::user::{DeviceResponse, AuditLogEntry};
 
 pub type DbPool = Pool<SqliteConnectionManager>;
 
@@ -38,7 +38,8 @@ impl Db {
         info!("Initializing database schema...");
         let conn = self.pool.get()?;
 
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             CREATE TABLE IF NOT EXISTS identities (
                 id TEXT PRIMARY KEY,
                 username TEXT UNIQUE NOT NULL,
@@ -113,7 +114,8 @@ impl Db {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(identity_id) REFERENCES identities(id)
             );
-        ")?;
+        ",
+        )?;
 
         info!("Database schema initialized successfully.");
         Ok(())
@@ -121,7 +123,11 @@ impl Db {
 
     // --- Identity Operations ---
 
-    pub fn create_identity(&self, username: &str, root_public_key: &[u8]) -> anyhow::Result<String> {
+    pub fn create_identity(
+        &self,
+        username: &str,
+        root_public_key: &[u8],
+    ) -> anyhow::Result<String> {
         let conn = self.pool.get()?;
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
@@ -131,9 +137,13 @@ impl Db {
         Ok(id)
     }
 
-    pub fn get_identity_by_username(&self, username: &str) -> anyhow::Result<Option<(String, Vec<u8>)>> {
+    pub fn get_identity_by_username(
+        &self,
+        username: &str,
+    ) -> anyhow::Result<Option<(String, Vec<u8>)>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("SELECT id, root_public_key FROM identities WHERE username = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT id, root_public_key FROM identities WHERE username = ?1")?;
         let mut rows = stmt.query([username])?;
         if let Some(row) = rows.next()? {
             Ok(Some((row.get(0)?, row.get(1)?)))
@@ -157,7 +167,12 @@ impl Db {
 
     // --- Device Operations ---
 
-    pub fn create_device(&self, identity_id: &str, public_key: &[u8], name: Option<&str>) -> anyhow::Result<String> {
+    pub fn create_device(
+        &self,
+        identity_id: &str,
+        public_key: &[u8],
+        name: Option<&str>,
+    ) -> anyhow::Result<String> {
         let conn = self.pool.get()?;
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
@@ -167,9 +182,14 @@ impl Db {
         Ok(id)
     }
 
-    pub fn get_devices_by_identity(&self, identity_id: &str) -> anyhow::Result<Vec<DeviceResponse>> {
+    pub fn get_devices_by_identity(
+        &self,
+        identity_id: &str,
+    ) -> anyhow::Result<Vec<DeviceResponse>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("SELECT id, public_key, name, last_active FROM devices WHERE identity_id = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT id, public_key, name, last_active FROM devices WHERE identity_id = ?1",
+        )?;
         let rows = stmt.query_map([identity_id], |row| {
             let public_key: Vec<u8> = row.get(1)?;
             Ok(DeviceResponse {
@@ -187,13 +207,18 @@ impl Db {
         Ok(devices)
     }
 
-    pub fn get_identity_by_public_key(&self, public_key: &[u8]) -> anyhow::Result<Option<IdentityInfo>> {
+    pub fn get_identity_by_public_key(
+        &self,
+        public_key: &[u8],
+    ) -> anyhow::Result<Option<IdentityInfo>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("
+        let mut stmt = conn.prepare(
+            "
             SELECT i.id, i.username FROM devices d
             JOIN identities i ON d.identity_id = i.id
             WHERE d.public_key = ?1
-        ")?;
+        ",
+        )?;
         let mut rows = stmt.query_map([public_key], |row| {
             Ok(IdentityInfo {
                 id: row.get(0)?,
@@ -206,7 +231,8 @@ impl Db {
         }
 
         // Also check identities table (Root Key)
-        let mut stmt = conn.prepare("SELECT id, username FROM identities WHERE root_public_key = ?1")?;
+        let mut stmt =
+            conn.prepare("SELECT id, username FROM identities WHERE root_public_key = ?1")?;
         let mut rows = stmt.query_map([public_key], |row| {
             Ok(IdentityInfo {
                 id: row.get(0)?,
@@ -232,9 +258,17 @@ impl Db {
 
     // --- Friend Operations ---
 
-    pub fn create_friend_request(&self, identity_id: &str, friend_identity_id: &str) -> anyhow::Result<()> {
+    pub fn create_friend_request(
+        &self,
+        identity_id: &str,
+        friend_identity_id: &str,
+    ) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        let (u1, u2) = if identity_id < friend_identity_id { (identity_id, friend_identity_id) } else { (friend_identity_id, identity_id) };
+        let (u1, u2) = if identity_id < friend_identity_id {
+            (identity_id, friend_identity_id)
+        } else {
+            (friend_identity_id, identity_id)
+        };
         conn.execute(
             "INSERT OR IGNORE INTO friends (identity_id_1, identity_id_2, status) VALUES (?1, ?2, 'pending')",
             [u1, u2],
@@ -242,7 +276,10 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_friends(&self, identity_id: &str) -> anyhow::Result<Vec<crate::friends::FriendResponse>> {
+    pub fn get_friends(
+        &self,
+        identity_id: &str,
+    ) -> anyhow::Result<Vec<crate::friends::FriendResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare("
             SELECT i.username, f.status, 
@@ -265,9 +302,17 @@ impl Db {
         Ok(friends)
     }
 
-    pub fn confirm_friendship(&self, identity_id_1: &str, identity_id_2: &str) -> anyhow::Result<()> {
+    pub fn confirm_friendship(
+        &self,
+        identity_id_1: &str,
+        identity_id_2: &str,
+    ) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        let (u1, u2) = if identity_id_1 < identity_id_2 { (identity_id_1, identity_id_2) } else { (identity_id_2, identity_id_1) };
+        let (u1, u2) = if identity_id_1 < identity_id_2 {
+            (identity_id_1, identity_id_2)
+        } else {
+            (identity_id_2, identity_id_1)
+        };
         conn.execute(
             "UPDATE friends SET status = 'confirmed' WHERE identity_id_1 = ?1 AND identity_id_2 = ?2",
             [u1, u2],
@@ -277,7 +322,11 @@ impl Db {
 
     pub fn delete_friend(&self, identity_id_1: &str, identity_id_2: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        let (u1, u2) = if identity_id_1 < identity_id_2 { (identity_id_1, identity_id_2) } else { (identity_id_2, identity_id_1) };
+        let (u1, u2) = if identity_id_1 < identity_id_2 {
+            (identity_id_1, identity_id_2)
+        } else {
+            (identity_id_2, identity_id_1)
+        };
         conn.execute(
             "DELETE FROM friends WHERE identity_id_1 = ?1 AND identity_id_2 = ?2",
             [u1, u2],
@@ -287,7 +336,11 @@ impl Db {
 
     pub fn block_friend(&self, identity_id: &str, blocked_identity_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        let (u1, u2) = if identity_id < blocked_identity_id { (identity_id, blocked_identity_id) } else { (blocked_identity_id, identity_id) };
+        let (u1, u2) = if identity_id < blocked_identity_id {
+            (identity_id, blocked_identity_id)
+        } else {
+            (blocked_identity_id, identity_id)
+        };
         conn.execute(
             "UPDATE friends SET status = 'blocked' WHERE identity_id_1 = ?1 AND identity_id_2 = ?2",
             [u1, u2],
@@ -307,7 +360,10 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_mailbox_messages(&self, device_id: &str) -> anyhow::Result<Vec<crate::mailbox::MailboxMessage>> {
+    pub fn get_mailbox_messages(
+        &self,
+        device_id: &str,
+    ) -> anyhow::Result<Vec<crate::mailbox::MailboxMessage>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare("SELECT id, payload, created_at FROM mailbox WHERE target_device_id = ?1 ORDER BY created_at ASC")?;
         let rows = stmt.query_map([device_id], |row| {
@@ -336,9 +392,15 @@ impl Db {
 
     // --- Vault Operations ---
 
-    pub fn create_vault_invite(&self, vault_id: &str, inviter_identity_id: &str, invitee_username: &str, role: &str) -> anyhow::Result<String> {
+    pub fn create_vault_invite(
+        &self,
+        vault_id: &str,
+        inviter_identity_id: &str,
+        invitee_username: &str,
+        role: &str,
+    ) -> anyhow::Result<String> {
         let conn = self.pool.get()?;
-        
+
         // Find invitee identity_id
         let invitee_identity_id: String = conn.query_row(
             "SELECT id FROM identities WHERE username = ?1",
@@ -351,19 +413,24 @@ impl Db {
             "INSERT INTO vault_invites (id, vault_id, inviter_identity_id, invitee_identity_id, role, status) VALUES (?1, ?2, ?3, ?4, ?5, 'pending')",
             [&id, vault_id, inviter_identity_id, &invitee_identity_id, role],
         )?;
-        
+
         Ok(id)
     }
 
-    pub fn get_pending_vault_invites(&self, identity_id: &str) -> anyhow::Result<Vec<crate::vaults::VaultInviteResponse>> {
+    pub fn get_pending_vault_invites(
+        &self,
+        identity_id: &str,
+    ) -> anyhow::Result<Vec<crate::vaults::VaultInviteResponse>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("
+        let mut stmt = conn.prepare(
+            "
             SELECT i.id, i.vault_id, iden.username, i.status, i.created_at, i.role
             FROM vault_invites i
             JOIN identities iden ON iden.id = i.inviter_identity_id
             WHERE i.invitee_identity_id = ?1 AND i.status = 'pending'
-        ")?;
-        
+        ",
+        )?;
+
         let rows = stmt.query_map([identity_id], |row| {
             Ok(crate::vaults::VaultInviteResponse {
                 id: row.get(0)?,
@@ -382,9 +449,14 @@ impl Db {
         Ok(invites)
     }
 
-    pub fn respond_to_vault_invite(&self, invite_id: &str, identity_id: &str, status: &str) -> anyhow::Result<()> {
+    pub fn respond_to_vault_invite(
+        &self,
+        invite_id: &str,
+        identity_id: &str,
+        status: &str,
+    ) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        
+
         // Update invite status
         conn.execute(
             "UPDATE vault_invites SET status = ?1 WHERE id = ?2 AND invitee_identity_id = ?3",
@@ -405,19 +477,24 @@ impl Db {
                 [vault_id, identity_id.to_string(), role],
             )?;
         }
-        
+
         Ok(())
     }
 
-    pub fn get_vault_members(&self, vault_id: &str) -> anyhow::Result<Vec<crate::vaults::VaultMemberResponse>> {
+    pub fn get_vault_members(
+        &self,
+        vault_id: &str,
+    ) -> anyhow::Result<Vec<crate::vaults::VaultMemberResponse>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("
+        let mut stmt = conn.prepare(
+            "
             SELECT m.identity_id, iden.username, m.role, m.joined_at
             FROM vault_members m
             JOIN identities iden ON iden.id = m.identity_id
             WHERE m.vault_id = ?1
-        ")?;
-        
+        ",
+        )?;
+
         let rows = stmt.query_map([vault_id], |row| {
             Ok(crate::vaults::VaultMemberResponse {
                 user_id: row.get(0)?,
@@ -436,7 +513,12 @@ impl Db {
 
     // --- Audit Log ---
 
-    pub fn log_event(&self, identity_id: &str, event_type: &str, metadata: Option<&str>) -> anyhow::Result<()> {
+    pub fn log_event(
+        &self,
+        identity_id: &str,
+        event_type: &str,
+        metadata: Option<&str>,
+    ) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
@@ -467,7 +549,13 @@ impl Db {
 
     // --- Share Operations ---
 
-    pub fn create_share(&self, payload: &[u8], owner_identity_id: Option<&str>, expires_at: Option<chrono::DateTime<chrono::Utc>>, max_views: Option<i32>) -> anyhow::Result<String> {
+    pub fn create_share(
+        &self,
+        payload: &[u8],
+        owner_identity_id: Option<&str>,
+        expires_at: Option<chrono::DateTime<chrono::Utc>>,
+        max_views: Option<i32>,
+    ) -> anyhow::Result<String> {
         let conn = self.pool.get()?;
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
@@ -479,7 +567,9 @@ impl Db {
 
     pub fn get_share(&self, id: &str) -> anyhow::Result<Option<ShareData>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("SELECT payload, expires_at, max_views, view_count FROM shares WHERE id = ?1")?;
+        let mut stmt = conn.prepare(
+            "SELECT payload, expires_at, max_views, view_count FROM shares WHERE id = ?1",
+        )?;
         let mut rows = stmt.query([id])?;
         if let Some(row) = rows.next()? {
             let payload: Vec<u8> = row.get(0)?;
@@ -511,10 +601,7 @@ impl Db {
 
     pub fn delete_share(&self, id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        conn.execute(
-            "DELETE FROM shares WHERE id = ?1",
-            [id],
-        )?;
+        conn.execute("DELETE FROM shares WHERE id = ?1", [id])?;
         Ok(())
     }
 }

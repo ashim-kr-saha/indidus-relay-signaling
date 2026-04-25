@@ -1,3 +1,4 @@
+pub mod audit;
 pub mod auth;
 pub mod config;
 pub mod db;
@@ -7,14 +8,13 @@ pub mod friends;
 pub mod mailbox;
 pub mod models;
 pub mod pairing;
+pub mod push;
 pub mod relay;
 pub mod server;
 pub mod signaling;
 pub mod turn;
-pub mod viewer;
-pub mod audit;
-pub mod push;
 pub mod vaults;
+pub mod viewer;
 
 pub use config::Config;
 pub use error::{Error, Result};

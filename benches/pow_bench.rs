@@ -1,5 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use sha2::{Sha256, Digest};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use sha2::{Digest, Sha256};
 
 fn solve_pow(username: &str, difficulty: u32) -> u64 {
     let mut nonce: u64 = 0;
@@ -8,7 +8,7 @@ fn solve_pow(username: &str, difficulty: u32) -> u64 {
         hasher.update(username.as_bytes());
         hasher.update(nonce.to_be_bytes());
         let result = hasher.finalize();
-        
+
         let mut leading_zeros = 0;
         for byte in result {
             let zeros = byte.leading_zeros();
