@@ -1,13 +1,12 @@
-use crate::{Error, Result, server::AppState, devices::validate_token};
+use crate::{Error, Result, server::AppState};
 use axum::{
-    extract::{State, Json, Path},
-    http::StatusCode,
+    extract::{State, Path},
+    http::{StatusCode, HeaderMap, Method, Uri},
     response::IntoResponse,
+    body::Bytes,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use axum_extra::extract::TypedHeader;
-use headers::{Authorization, authorization::Bearer};
 
 #[derive(Debug, Deserialize)]
 pub struct EnqueueRequest {
@@ -24,11 +23,16 @@ pub struct MailboxMessage {
 
 pub async fn enqueue_message(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
-    Json(payload): Json<EnqueueRequest>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    body: Bytes,
 ) -> Result<impl IntoResponse> {
-    let _user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let _identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body).await?;
     
+    let payload: EnqueueRequest = serde_json::from_slice(&body)
+        .map_err(|e| Error::BadRequest(e.to_string()))?;
+
     state.db.enqueue_mailbox_message(&payload.target_device_id, &payload.payload)
         .map_err(|e| Error::Internal(e.to_string()))?;
 
@@ -37,10 +41,14 @@ pub async fn enqueue_message(
 
 pub async fn get_mailbox(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
     Path(device_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let _user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let _identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
+    
+    // TODO: Verify identity_id owns device_id
     
     let messages = state.db.get_mailbox_messages(&device_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
@@ -49,5 +57,5 @@ pub async fn get_mailbox(
     state.db.clear_mailbox(&device_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
 
-    Ok(Json(messages))
+    Ok(axum::Json(messages))
 }

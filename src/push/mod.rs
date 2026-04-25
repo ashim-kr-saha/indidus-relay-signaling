@@ -1,20 +1,21 @@
-use crate::{Result, server::AppState, devices::validate_token};
+use crate::{Result, Error, server::AppState};
 use axum::{
     extract::{State, Path},
+    http::{HeaderMap, Method, Uri},
     response::sse::{Event, KeepAlive, Sse},
 };
 use futures::stream::{self, Stream};
 use std::{convert::Infallible, time::Duration};
-use axum_extra::extract::TypedHeader;
-use headers::{Authorization, authorization::Bearer};
 use std::sync::Arc;
 
 pub async fn push_stream(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
     Path(device_id): Path<String>,
 ) -> Result<Sse<impl Stream<Item = std::result::Result<Event, Infallible>>>> {
-    let _user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let _identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
 
     let stream = stream::unfold((state, device_id), |(state, device_id)| async move {
         loop {

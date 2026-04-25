@@ -1,19 +1,21 @@
-use crate::{Error, Result, server::AppState, devices::validate_token};
+use crate::{Error, Result, server::AppState};
 use axum::{
-    extract::{State, Json},
+    extract::State,
+    http::{HeaderMap, Method, Uri},
     response::IntoResponse,
+    Json,
 };
 use std::sync::Arc;
-use axum_extra::extract::TypedHeader;
-use headers::{Authorization, authorization::Bearer};
 
 pub async fn get_audit_logs(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
 ) -> Result<impl IntoResponse> {
-    let user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let logs = state.db.get_audit_logs(&user_id)
+    let logs = state.db.get_audit_logs(&identity_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(logs))

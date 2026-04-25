@@ -55,10 +55,7 @@ pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener
 
     let app = Router::new()
         .route("/health", get(health_check))
-        .route("/auth/register", post(crate::auth::register).layer(GovernorLayer { config: governor_config.clone() }))
-        .route("/auth/login", post(crate::auth::login).layer(GovernorLayer { config: governor_config.clone() }))
-        .route("/auth/refresh", post(crate::auth::refresh))
-        .route("/auth/logout", post(crate::auth::logout))
+        .route("/identities", post(crate::auth::register_identity).layer(GovernorLayer { config: governor_config.clone() }))
         .route("/devices", post(crate::devices::register_device).get(crate::devices::list_devices))
         .route("/devices/:id", post(crate::devices::revoke_device))
         .route("/friends", post(crate::friends::send_friend_request).get(crate::friends::list_friends))

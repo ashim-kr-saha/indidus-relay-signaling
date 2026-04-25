@@ -14,7 +14,10 @@ pub enum SignalingMessage {
     #[serde(rename = "init")]
     Init {
         device_id: String,
-        token: String,
+        identity_id: String,
+        timestamp: String,
+        public_key: String, // Hex encoded Device Public Key
+        signature: String,  // Hex encoded signature over "WS_INIT|device_id|identity_id|timestamp"
     },
     #[serde(rename = "offer")]
     Offer {
@@ -75,8 +78,20 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
         if let Ok(sig_msg) = serde_json::from_str::<SignalingMessage>(&text) {
             match sig_msg {
-                SignalingMessage::Init { device_id, token } => {
-                    if crate::devices::validate_token(&token, &state.config.auth.jwt_secret).is_ok() {
+                SignalingMessage::Init { device_id, identity_id, timestamp, public_key, signature } => {
+                    let pk_bytes = hex::decode(&public_key).unwrap_or_default();
+                    let signed_data = format!("WS_INIT|{}|{}|{}", device_id, identity_id, timestamp);
+                    
+                    let mut is_valid = false;
+                    if let Ok(identity_id_from_db) = state.db.get_identity_id_by_device_public_key(&pk_bytes) {
+                        if identity_id_from_db.is_some_and(|id| id == identity_id) {
+                            if crate::auth::validate_request_signature(&pk_bytes, "WS_INIT", &device_id, &timestamp, identity_id.as_bytes(), &signature).is_ok() {
+                                is_valid = true;
+                            }
+                        }
+                    }
+
+                    if is_valid {
                         current_device_id = Some(device_id.clone());
                         let mut peers = state.peers.lock().await;
                         peers.insert(device_id.clone(), tx.clone());
@@ -91,7 +106,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                             let _ = state.db.clear_mailbox(&device_id);
                         }
                     } else {
-                        let _ = tx.send(SignalingMessage::Error { message: "Invalid token".to_string() });
+                        let _ = tx.send(SignalingMessage::Error { message: "Invalid signature or device key".to_string() });
                     }
                 }
                 SignalingMessage::Offer { target_device_id, sdp, .. } => {

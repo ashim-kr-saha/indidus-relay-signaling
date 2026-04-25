@@ -22,9 +22,6 @@ impl Default for Config {
                 path: "signaling.db".to_string(),
             },
             auth: AuthConfig {
-                jwt_secret: "dev_secret_change_me".to_string(),
-                access_token_ttl: 900,
-                refresh_token_ttl: 2592000,
                 registration_difficulty: 16,
             },
             turn: TurnConfig {
@@ -53,9 +50,6 @@ pub struct DatabaseConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthConfig {
-    pub jwt_secret: String,
-    pub access_token_ttl: u64, // seconds
-    pub refresh_token_ttl: u64, // seconds
     pub registration_difficulty: u32, // number of leading zero bits
 }
 

@@ -1,4 +1,4 @@
-use crate::{Error, Result, server::AppState, auth::Claims};
+use crate::{Error, Result, server::AppState};
 use axum::{
     extract::{State, Json, Path},
     http::StatusCode,
@@ -6,51 +6,53 @@ use axum::{
 };
 use serde::Deserialize;
 use std::sync::Arc;
-use axum_extra::extract::TypedHeader;
-use headers::{Authorization, authorization::Bearer};
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
 
 #[derive(Debug, Deserialize)]
 pub struct RegisterDeviceRequest {
-    pub public_key: Vec<u8>,
+    pub identity_id: String, // Which identity to link to
+    pub public_key: String,  // Hex encoded
     pub name: Option<String>,
 }
 
-// Middleware-like function to validate JWT
-pub fn validate_token(token: &str, secret: &str) -> Result<String> {
-    let mut validation = Validation::new(Algorithm::HS256);
-    validation.validate_exp = true;
-
-    let token_data = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|_| Error::Auth("Invalid token".to_string()))?;
-
-    Ok(token_data.claims.sub)
-}
+// v4.0 uses Stateless Identity
 
 pub async fn register_device(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
-    Json(payload): Json<RegisterDeviceRequest>,
+    headers: axum::http::HeaderMap,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
+    body: axum::body::Bytes,
 ) -> Result<impl IntoResponse> {
-    let user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let method_str = method.as_str();
+    let path = uri.path();
     
-    let device_id = state.db.create_device(&user_id, &payload.public_key, payload.name.as_deref())
+    let payload: RegisterDeviceRequest = serde_json::from_slice(&body)
+        .map_err(|e| Error::BadRequest(e.to_string()))?;
+
+    let identity_id = crate::auth::authenticate_identity(&state, &headers, method_str, path, &body).await?;
+    
+    if identity_id != payload.identity_id {
+        return Err(Error::Auth("Identity mismatch".to_string()));
+    }
+
+    let pk_bytes = hex::decode(&payload.public_key)
+        .map_err(|_| Error::BadRequest("Invalid public key hex".to_string()))?;
+
+    let device_id = state.db.create_device(&identity_id, &pk_bytes, payload.name.as_deref())
         .map_err(|e| Error::Internal(e.to_string()))?;
 
-    Ok((StatusCode::CREATED, Json(json!({ "id": device_id }))))
+    Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": device_id }))))
 }
 
 pub async fn list_devices(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: axum::http::HeaderMap,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
 ) -> Result<impl IntoResponse> {
-    let user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let devices = state.db.get_devices_by_user(&user_id)
+    let devices = state.db.get_devices_by_identity(&identity_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(devices))
@@ -58,12 +60,14 @@ pub async fn list_devices(
 
 pub async fn revoke_device(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: axum::http::HeaderMap,
+    method: axum::http::Method,
+    uri: axum::http::Uri,
     Path(device_id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    state.db.delete_device(&device_id, &user_id)
+    state.db.delete_device(&device_id, &identity_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)

@@ -1,12 +1,12 @@
-use crate::{Error, Result, server::AppState, devices::validate_token};
+use crate::{Error, Result, server::AppState};
 use axum::{
     extract::{State, Path},
+    http::{HeaderMap, Method, Uri},
     Json,
+    body::Bytes,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use axum_extra::extract::TypedHeader;
-use headers::{Authorization, authorization::Bearer};
 
 #[derive(Debug, Deserialize)]
 pub struct VaultInviteRequest {
@@ -35,11 +35,16 @@ pub struct VaultInviteResponse {
 
 pub async fn invite_to_vault(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
-    Json(payload): Json<VaultInviteRequest>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
+    body: Bytes,
 ) -> Result<Json<String>> {
-    let inviter_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let inviter_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body).await?;
     
+    let payload: VaultInviteRequest = serde_json::from_slice(&body)
+        .map_err(|e| Error::BadRequest(e.to_string()))?;
+
     let invite_id = state.db.create_vault_invite(
         &payload.vault_id,
         &inviter_id,
@@ -52,11 +57,13 @@ pub async fn invite_to_vault(
 
 pub async fn list_vault_invites(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
 ) -> Result<Json<Vec<VaultInviteResponse>>> {
-    let user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let invites = state.db.get_pending_vault_invites(&user_id)
+    let invites = state.db.get_pending_vault_invites(&identity_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(invites))
@@ -64,12 +71,14 @@ pub async fn list_vault_invites(
 
 pub async fn accept_vault_invite(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
     Path(invite_id): Path<String>,
 ) -> Result<Json<()>> {
-    let user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    state.db.respond_to_vault_invite(&invite_id, &user_id, "accepted")
+    state.db.respond_to_vault_invite(&invite_id, &identity_id, "accepted")
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(()))
@@ -77,10 +86,12 @@ pub async fn accept_vault_invite(
 
 pub async fn list_vault_members(
     State(state): State<Arc<AppState>>,
-    TypedHeader(auth): TypedHeader<Authorization<Bearer>>,
+    headers: HeaderMap,
+    method: Method,
+    uri: Uri,
     Path(vault_id): Path<String>,
 ) -> Result<Json<Vec<VaultMemberResponse>>> {
-    let _user_id = validate_token(auth.token(), &state.config.auth.jwt_secret)?;
+    let _identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
     let members = state.db.get_vault_members(&vault_id)
         .map_err(|e| Error::Internal(e.to_string()))?;
