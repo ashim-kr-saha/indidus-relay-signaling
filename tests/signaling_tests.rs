@@ -1,90 +1,117 @@
 mod common;
-use common::{TestServer, solve_pow};
-use reqwest::Client;
+use common::{TestServer, solve_pow, generate_signature};
+use reqwest::{Client, StatusCode};
 use serde_json::json;
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
 use futures::{SinkExt, StreamExt};
+use ed25519_dalek::{SigningKey, Signer};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn test_mailbox_and_signaling() {
     let server = TestServer::spawn().await;
     let client = Client::new();
     
-    // 1. Setup Alice and Bob
-    let (alice_token, _alice_id) = setup_user(&server, &client, "alice").await;
-    let (bob_token, _bob_id) = setup_user(&server, &client, "bob").await;
+    // 1. Setup Alice
+    let alice_key = SigningKey::generate(&mut rand::thread_rng());
+    let alice_pk_hex = hex::encode(alice_key.verifying_key().as_bytes());
+    let alice_pow = solve_pow("alice", server.config.auth.registration_difficulty);
+    client.post(server.url("/register"))
+        .json(&json!({"username": "alice", "root_public_key": alice_pk_hex, "pow_nonce": alice_pow}))
+        .send().await.unwrap();
 
-    // 2. Register devices
-    let _alice_device_id = register_device(&server, &client, &alice_token, "alice-phone").await;
-    let bob_device_id = register_device(&server, &client, &bob_token, "bob-phone").await;
+    // 2. Setup Bob
+    let bob_key = SigningKey::generate(&mut rand::thread_rng());
+    let bob_pk_hex = hex::encode(bob_key.verifying_key().as_bytes());
+    let bob_pow = solve_pow("bob", server.config.auth.registration_difficulty);
+    client.post(server.url("/register"))
+        .json(&json!({"username": "bob", "root_public_key": bob_pk_hex, "pow_nonce": bob_pow}))
+        .send().await.unwrap();
+
+    // Fetch device ID for Bob
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let signature = generate_signature(
+        &bob_key.to_bytes(),
+        "GET",
+        "/devices",
+        timestamp,
+        &[]
+    );
+    let resp = client.get(server.url("/devices"))
+        .header("X-Identity", "bob")
+        .header("X-Public-Key", &bob_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
+        .send().await.unwrap();
+    let bob_devices: Vec<serde_json::Value> = resp.json().await.unwrap();
+    let bob_device_id = bob_devices[0]["id"].as_str().unwrap().to_string();
 
     // 3. Alice sends message to Bob while Bob is offline
-    let msg_payload = json!({
-        "type": "offer",
-        "sdp": "v=0..."
+    let msg_payload = b"hello bob";
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let body = json!({
+        "target_device_id": bob_device_id,
+        "payload": msg_payload.to_vec()
     });
+    let body_bytes = serde_json::to_vec(&body).unwrap();
+    let signature = generate_signature(
+        &alice_key.to_bytes(),
+        "POST",
+        "/mailbox",
+        timestamp,
+        &body_bytes
+    );
 
     let resp = client.post(server.url("/mailbox"))
-        .bearer_auth(&alice_token)
-        .json(&json!({
-            "target_device_id": bob_device_id,
-            "payload": serde_json::to_vec(&msg_payload).unwrap()
-        }))
+        .header("X-Identity", "alice")
+        .header("X-Public-Key", &alice_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
+        .json(&body)
         .send()
         .await
         .unwrap();
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap();
-        panic!("Mailbox enqueue failed: {}. Body: {}", status, body);
-    }
+    
+    assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // 4. Bob connects via WebSocket and should receive the mailbox message
+    // 4. Bob connects via WebSocket
     let (mut ws_stream, _) = connect_async(server.ws_url()).await.unwrap();
     
-    // Init command
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let signature = generate_signature(
+        &bob_key.to_bytes(),
+        "WS_INIT",
+        &bob_device_id,
+        timestamp,
+        "bob".as_bytes()
+    );
+
     ws_stream.send(Message::Text(json!({
         "type": "init",
-        "token": bob_token,
-        "device_id": bob_device_id
+        "identity_id": "bob",
+        "device_id": bob_device_id,
+        "public_key": bob_pk_hex,
+        "timestamp": timestamp.to_string(),
+        "signature": signature
     }).to_string())).await.unwrap();
 
-    // Bob should get the mailbox push
-    let msg = ws_stream.next().await.unwrap().unwrap();
-    let msg_text = msg.to_text().unwrap();
-    println!("Received message: {}", msg_text);
-    assert!(msg_text.contains("mailbox_push") || msg_text.contains("offer"));
-}
-
-async fn setup_user(server: &TestServer, client: &Client, username: &str) -> (String, String) {
-    let pow = solve_pow(username, server.config.auth.registration_difficulty);
-    client.post(server.url("/auth/register"))
-        .json(&json!({"username": username, "password": "password", "pow_nonce": pow}))
-        .send().await.unwrap();
+    // Bob should get the mailbox push or an init success
+    let msg = tokio::time::timeout(tokio::time::Duration::from_secs(5), ws_stream.next())
+        .await
+        .expect("Timeout waiting for WS message")
+        .expect("Stream closed")
+        .expect("WS error");
     
-    let resp = client.post(server.url("/auth/login"))
-        .json(&json!({"username": username, "password": "password"}))
-        .send().await.unwrap();
-    
-    let data: serde_json::Value = resp.json().await.unwrap();
-    (data["access_token"].as_str().unwrap().to_string(), username.to_string())
-}
+    println!("Received: {}", msg);
+    assert!(msg.to_text().unwrap().contains("init_success"));
 
-async fn register_device(server: &TestServer, client: &Client, token: &str, name: &str) -> String {
-    let resp = client.post(server.url("/devices"))
-        .bearer_auth(token)
-        .json(&json!({
-            "public_key": vec![0u8; 32],
-            "name": name
-        }))
-        .send().await.unwrap();
+    // Bob should also get the mailbox push
+    let msg = tokio::time::timeout(tokio::time::Duration::from_secs(5), ws_stream.next())
+        .await
+        .expect("Timeout waiting for mailbox push")
+        .expect("Stream closed")
+        .expect("WS error");
     
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap();
-        panic!("Device registration failed: {}. Body: {}", status, body);
-    }
-
-    let data: serde_json::Value = resp.json().await.unwrap();
-    data["id"].as_str().unwrap().to_string()
+    println!("Received: {}", msg);
+    assert!(msg.to_text().unwrap().contains("mailbox_push"));
 }

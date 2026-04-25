@@ -38,7 +38,9 @@ pub async fn register_device(
     let pk_bytes = hex::decode(&payload.public_key)
         .map_err(|_| Error::BadRequest("Invalid public key hex".to_string()))?;
 
-    let device_id = state.db.create_device(&identity_id, &pk_bytes, payload.name.as_deref())
+    let id = identity_id.clone();
+    let name = payload.name.clone();
+    let device_id = state.db_call(move |db| db.create_device(&id, &pk_bytes, name.as_deref())).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "id": device_id }))))
@@ -52,7 +54,8 @@ pub async fn list_devices(
 ) -> Result<impl IntoResponse> {
     let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let devices = state.db.get_devices_by_identity(&identity_id)
+    let id = identity_id.clone();
+    let devices = state.db_call(move |db| db.get_devices_by_identity(&id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(devices))
@@ -67,10 +70,12 @@ pub async fn revoke_device(
 ) -> Result<impl IntoResponse> {
     let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    state.db.delete_device(&device_id, &identity_id)
+    let d_id = device_id.clone();
+    let id = identity_id.clone();
+    state.db_call(move |db| db.delete_device(&d_id, &id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)
 }
 
-use serde_json::json;
+

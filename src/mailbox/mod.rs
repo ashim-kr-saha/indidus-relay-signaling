@@ -33,7 +33,9 @@ pub async fn enqueue_message(
     let payload: EnqueueRequest = serde_json::from_slice(&body)
         .map_err(|e| Error::BadRequest(e.to_string()))?;
 
-    state.db.enqueue_mailbox_message(&payload.target_device_id, &payload.payload)
+    let t_id = payload.target_device_id.clone();
+    let data = payload.payload.clone();
+    state.db_call(move |db| db.enqueue_mailbox_message(&t_id, &data)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(StatusCode::CREATED)
@@ -50,11 +52,13 @@ pub async fn get_mailbox(
     
     // TODO: Verify identity_id owns device_id
     
-    let messages = state.db.get_mailbox_messages(&device_id)
+    let d_id = device_id.clone();
+    let messages = state.db_call(move |db| db.get_mailbox_messages(&d_id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     // Atomically clear mailbox after retrieval
-    state.db.clear_mailbox(&device_id)
+    let d_id2 = device_id.clone();
+    state.db_call(move |db| db.clear_mailbox(&d_id2)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(axum::Json(messages))

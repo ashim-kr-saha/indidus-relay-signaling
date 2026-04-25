@@ -1,6 +1,9 @@
-use crate::{Config, db::Db};
+use crate::{Config, db::Db, viewer, signaling::SignalingMessage};
+use dashmap::DashMap;
+use tokio::sync::mpsc;
+
 use axum::{
-    routing::{get, post},
+    routing::{get, post, delete},
     Router,
     extract::State,
     response::IntoResponse,
@@ -11,39 +14,42 @@ use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
-type PeerMap = Arc<tokio::sync::Mutex<std::collections::HashMap<String, tokio::sync::mpsc::UnboundedSender<crate::signaling::SignalingMessage>>>>;
-type PairingMap = Arc<tokio::sync::Mutex<std::collections::HashMap<String, (Vec<u8>, Option<Vec<u8>>)>>>;
-
 pub struct AppState {
     pub config: Config,
     pub db: Db,
-    pub peers: PeerMap,
-    pub pairing_sessions: PairingMap,
+    pub peers: DashMap<String, mpsc::UnboundedSender<SignalingMessage>>,
+    pub pairing_sessions: DashMap<String, (Vec<u8>, Option<Vec<u8>>)>,
     pub prometheus_handle: PrometheusHandle,
 }
 
-pub async fn run(config: Config) -> anyhow::Result<()> {
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    run_with_listener(config, listener).await
+impl AppState {
+    pub fn new(config: Config) -> anyhow::Result<Self> {
+        let db = Db::open(&config.database.path)?;
+        let prometheus_handle = match PrometheusBuilder::new().install_recorder() {
+            Ok(h) => h,
+            Err(_) => PrometheusBuilder::new().build_recorder().handle(),
+        };
+
+        Ok(Self {
+            config,
+            db,
+            peers: DashMap::new(),
+            pairing_sessions: DashMap::new(),
+            prometheus_handle,
+        })
+    }
+
+    pub async fn db_call<F, R>(&self, f: F) -> R 
+    where 
+        F: FnOnce(&Db) -> R + Send + 'static,
+        R: Send + 'static
+    {
+        let db = self.db.clone();
+        tokio::task::spawn_blocking(move || f(&db)).await.expect("DB task panicked")
+    }
 }
 
-pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
-    // Initialize Prometheus exporter
-    let prometheus_handle = match PrometheusBuilder::new().install_recorder() {
-        Ok(h) => h,
-        Err(_) => PrometheusBuilder::new().build_recorder().handle(),
-    };
-
-    let db = Db::open(&config.database.path)?;
-    let state = Arc::new(AppState {
-        config: config.clone(),
-        db,
-        peers: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-        pairing_sessions: Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new())),
-        prometheus_handle,
-    });
-
+pub fn create_app(state: Arc<AppState>) -> Router {
     // Rate limiting configuration: 1 request every 2 seconds (30/min) per IP
     let governor_config = Arc::new(
         GovernorConfigBuilder::default()
@@ -53,13 +59,14 @@ pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener
             .unwrap(),
     );
 
-    let app = Router::new()
+    Router::new()
         .route("/health", get(health_check))
-        .route("/identities", post(crate::auth::register_identity).layer(GovernorLayer { config: governor_config.clone() }))
+        .route("/register", post(crate::auth::register_identity).layer(GovernorLayer { config: governor_config.clone() }))
         .route("/devices", post(crate::devices::register_device).get(crate::devices::list_devices))
         .route("/devices/:id", post(crate::devices::revoke_device))
         .route("/friends", post(crate::friends::send_friend_request).get(crate::friends::list_friends))
         .route("/friends/accept/:username", post(crate::friends::accept_friend_request))
+        .route("/friends/:username", delete(crate::friends::remove_friend))
         .route("/turn", get(crate::turn::get_turn_credentials))
         .route("/audit", get(crate::audit::get_audit_logs))
         .route("/push/:device_id", get(crate::push::push_stream))
@@ -76,9 +83,22 @@ pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener
         .route("/shares", post(crate::relay::upload_share))
         .route("/shares/:id", get(crate::relay::download_share).delete(crate::relay::revoke_share))
         .route("/shares/:id/acknowledge", post(crate::relay::acknowledge_share))
+        .route("/v/:id", get(viewer::serve_viewer))
+        .route("/pkg/*path", get(viewer::static_handler))
         .route("/metrics", get(metrics_handler))
         .layer(TraceLayer::new_for_http())
-        .with_state(state);
+        .with_state(state)
+}
+
+pub async fn run(config: Config) -> anyhow::Result<()> {
+    let addr = format!("{}:{}", config.server.host, config.server.port);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    run_with_listener(config, listener).await
+}
+
+pub async fn run_with_listener(config: Config, listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+    let state = Arc::new(AppState::new(config)?);
+    let app = create_app(state);
 
     tracing::info!("Starting server on {}", listener.local_addr()?);
     axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;

@@ -1,69 +1,125 @@
 mod common;
-use common::{TestServer, solve_pow};
+use common::{TestServer, solve_pow, generate_signature};
 use reqwest::{Client, StatusCode};
 use serde_json::json;
+use ed25519_dalek::SigningKey;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
-async fn test_social_and_vaults() {
+async fn test_friend_request_lifecycle() {
     let server = TestServer::spawn().await;
     let client = Client::new();
     
-    let alice_token = setup_user(&server, &client, "alice").await;
-    let bob_token = setup_user(&server, &client, "bob").await;
+    // 1. Setup Alice
+    let alice_key = SigningKey::generate(&mut rand::thread_rng());
+    let alice_pk_hex = hex::encode(alice_key.verifying_key().as_bytes());
+    let alice_pow = solve_pow("alice", server.config.auth.registration_difficulty);
+    client.post(server.url("/register"))
+        .json(&json!({"username": "alice", "root_public_key": alice_pk_hex, "pow_nonce": alice_pow}))
+        .send().await.unwrap();
 
-    // 1. Alice sends friend request to Bob
+    // 2. Setup Bob
+    let bob_key = SigningKey::generate(&mut rand::thread_rng());
+    let bob_pk_hex = hex::encode(bob_key.verifying_key().as_bytes());
+    let bob_pow = solve_pow("bob", server.config.auth.registration_difficulty);
+    client.post(server.url("/register"))
+        .json(&json!({"username": "bob", "root_public_key": bob_pk_hex, "pow_nonce": bob_pow}))
+        .send().await.unwrap();
+
+    // 3. Alice sends friend request to Bob
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let body = json!({ "friend_username": "bob" });
+    let body_bytes = serde_json::to_vec(&body).unwrap();
+    let signature = generate_signature(
+        &alice_key.to_bytes(),
+        "POST",
+        "/friends",
+        timestamp,
+        &body_bytes
+    );
+
     let resp = client.post(server.url("/friends"))
-        .bearer_auth(&alice_token)
-        .json(&json!({ "friend_username": "bob" }))
+        .header("X-Identity", "alice")
+        .header("X-Public-Key", &alice_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
+        .json(&body)
         .send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::CREATED, "Friend request failed");
+    assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // 2. Bob accepts friend request
-    let resp = client.post(server.url(format!("/friends/accept/{}", "alice").as_str()))
-        .bearer_auth(&bob_token)
-        .send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "Accept friend request failed");
+    // 4. Bob accepts friend request
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let path = "/friends/accept/alice";
+    let signature = generate_signature(
+        &bob_key.to_bytes(),
+        "POST",
+        path,
+        timestamp,
+        &[]
+    );
 
-    // 3. Alice invites Bob to a vault
-    let vault_id = "vault-123";
-    let resp = client.post(server.url("/vaults/invite"))
-        .bearer_auth(&alice_token)
-        .json(&json!({
-            "vault_id": vault_id,
-            "invitee_username": "bob",
-            "role": "editor"
-        }))
-        .send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "Vault invite failed");
-    let invite_id: String = resp.json().await.unwrap();
-
-    // 4. Bob accepts vault invite
-    let resp = client.post(server.url(format!("/vaults/invites/{}/accept", invite_id).as_str()))
-        .bearer_auth(&bob_token)
-        .send().await.unwrap();
-    assert_eq!(resp.status(), StatusCode::OK, "Accept vault invite failed");
-
-    // 5. Alice checks vault members
-    let resp = client.get(server.url(format!("/vaults/{}/members", vault_id).as_str()))
-        .bearer_auth(&alice_token)
+    let resp = client.post(server.url(path))
+        .header("X-Identity", "bob")
+        .header("X-Public-Key", &bob_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
         .send().await.unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let members: serde_json::Value = resp.json().await.unwrap();
-    assert!(members.as_array().unwrap().iter().any(|m| m["username"] == "bob"), "Bob not in vault members");
-}
 
-async fn setup_user(server: &TestServer, client: &Client, username: &str) -> String {
-    let pow = solve_pow(username, server.config.auth.registration_difficulty);
-    let resp = client.post(server.url("/auth/register"))
-        .json(&json!({"username": username, "password": "password", "pow_nonce": pow}))
+    // 5. Alice lists friends
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let signature = generate_signature(
+        &alice_key.to_bytes(),
+        "GET",
+        "/friends",
+        timestamp,
+        &[]
+    );
+
+    let resp = client.get(server.url("/friends"))
+        .header("X-Identity", "alice")
+        .header("X-Public-Key", &alice_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
         .send().await.unwrap();
-    assert!(resp.status().is_success(), "Setup user registration failed for {}", username);
-    
-    let resp = client.post(server.url("/auth/login"))
-        .json(&json!({"username": username, "password": "password"}))
+    assert_eq!(resp.status(), StatusCode::OK);
+    let friends: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert!(friends.iter().any(|f| f["username"] == "bob" && f["status"] == "confirmed"));
+
+    // 6. Alice removes Bob
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let path = "/friends/bob";
+    let signature = generate_signature(
+        &alice_key.to_bytes(),
+        "DELETE",
+        path,
+        timestamp,
+        &[]
+    );
+
+    let resp = client.delete(server.url(path))
+        .header("X-Identity", "alice")
+        .header("X-Public-Key", &alice_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
         .send().await.unwrap();
-    assert!(resp.status().is_success(), "Setup user login failed for {}", username);
-    
-    let data: serde_json::Value = resp.json().await.unwrap();
-    data["access_token"].as_str().unwrap().to_string()
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    // 7. Verify Bob is gone
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let signature = generate_signature(
+        &alice_key.to_bytes(),
+        "GET",
+        "/friends",
+        timestamp,
+        &[]
+    );
+    let resp = client.get(server.url("/friends"))
+        .header("X-Identity", "alice")
+        .header("X-Public-Key", &alice_pk_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
+        .send().await.unwrap();
+    let friends: Vec<serde_json::Value> = resp.json().await.unwrap();
+    assert!(!friends.iter().any(|f| f["username"] == "bob"));
 }

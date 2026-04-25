@@ -15,6 +15,12 @@ pub struct ShareData {
     pub view_count: i32,
 }
 
+pub struct IdentityInfo {
+    pub id: String,
+    pub username: String,
+}
+
+#[derive(Clone)]
 pub struct Db {
     pool: DbPool,
 }
@@ -181,21 +187,37 @@ impl Db {
         Ok(devices)
     }
 
-    pub fn get_identity_id_by_device_public_key(&self, public_key: &[u8]) -> anyhow::Result<Option<String>> {
+    pub fn get_identity_by_public_key(&self, public_key: &[u8]) -> anyhow::Result<Option<IdentityInfo>> {
         let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("SELECT identity_id FROM devices WHERE public_key = ?1")?;
-        let mut rows = stmt.query([public_key])?;
-        if let Some(row) = rows.next()? {
-            Ok(Some(row.get(0)?))
+        let mut stmt = conn.prepare("
+            SELECT i.id, i.username FROM devices d
+            JOIN identities i ON d.identity_id = i.id
+            WHERE d.public_key = ?1
+        ")?;
+        let mut rows = stmt.query_map([public_key], |row| {
+            Ok(IdentityInfo {
+                id: row.get(0)?,
+                username: row.get(1)?,
+            })
+        })?;
+
+        if let Some(res) = rows.next() {
+            return Ok(Some(res?));
+        }
+
+        // Also check identities table (Root Key)
+        let mut stmt = conn.prepare("SELECT id, username FROM identities WHERE root_public_key = ?1")?;
+        let mut rows = stmt.query_map([public_key], |row| {
+            Ok(IdentityInfo {
+                id: row.get(0)?,
+                username: row.get(1)?,
+            })
+        })?;
+
+        if let Some(res) = rows.next() {
+            Ok(Some(res?))
         } else {
-            // Also check identities table (Root Key)
-            let mut stmt = conn.prepare("SELECT id FROM identities WHERE root_public_key = ?1")?;
-            let mut rows = stmt.query([public_key])?;
-            if let Some(row) = rows.next()? {
-                Ok(Some(row.get(0)?))
-            } else {
-                Ok(None)
-            }
+            Ok(None)
         }
     }
 
@@ -212,9 +234,10 @@ impl Db {
 
     pub fn create_friend_request(&self, identity_id: &str, friend_identity_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
+        let (u1, u2) = if identity_id < friend_identity_id { (identity_id, friend_identity_id) } else { (friend_identity_id, identity_id) };
         conn.execute(
             "INSERT OR IGNORE INTO friends (identity_id_1, identity_id_2, status) VALUES (?1, ?2, 'pending')",
-            [identity_id, friend_identity_id],
+            [u1, u2],
         )?;
         Ok(())
     }

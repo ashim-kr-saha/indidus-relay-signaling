@@ -15,7 +15,8 @@ pub async fn get_audit_logs(
 ) -> Result<impl IntoResponse> {
     let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let logs = state.db.get_audit_logs(&identity_id)
+    let id = identity_id.clone();
+    let logs = state.db_call(move |db| db.get_audit_logs(&id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(logs))

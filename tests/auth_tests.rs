@@ -1,91 +1,79 @@
 mod common;
-use common::{TestServer, solve_pow};
+use common::{TestServer, solve_pow, generate_signature};
 use reqwest::{Client, StatusCode};
 use serde_json::json;
+use ed25519_dalek::SigningKey;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
-async fn test_registration_and_login() {
+async fn test_registration_and_device_management() {
     let server = TestServer::spawn().await;
     let client = Client::new();
     let username = "alice";
-    let password = "password123";
+    
+    // 1. Generate Key
+    let mut rng = rand::thread_rng();
+    let signing_key = SigningKey::generate(&mut rng);
+    let public_key = signing_key.verifying_key();
+    let public_key_hex = hex::encode(public_key.as_bytes());
 
-    // 1. Solve PoW
+    // 2. Solve PoW
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
 
-    // 2. Register
-    let resp = client.post(server.url("/auth/register"))
+    // 3. Register
+    let resp = client.post(server.url("/register"))
         .json(&json!({
             "username": username,
-            "password": password,
+            "root_public_key": public_key_hex,
             "pow_nonce": pow_nonce
         }))
         .send()
         .await
         .unwrap();
     
-    let status = resp.status();
-    assert_eq!(status, StatusCode::CREATED, "Registration failed: {}", resp.text().await.unwrap());
+    assert_eq!(resp.status(), StatusCode::CREATED);
 
-    // 3. Login
-    let resp = client.post(server.url("/auth/login"))
-        .json(&json!({
-            "username": username,
-            "password": password
-        }))
+    // 4. Test authenticated request (Get Device)
+    // In v4.0, /devices returns list of devices for identity
+    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+    let signature = generate_signature(
+        &signing_key.to_bytes(),
+        "GET",
+        "/devices",
+        timestamp,
+        &[]
+    );
+
+    let resp = client.get(server.url("/devices"))
+        .header("X-Identity", username)
+        .header("X-Public-Key", &public_key_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
         .send()
         .await
         .unwrap();
     
     assert_eq!(resp.status(), StatusCode::OK);
-    let auth_data: serde_json::Value = resp.json().await.unwrap();
-    let access_token = auth_data["access_token"].as_str().unwrap();
-    let refresh_token = auth_data["refresh_token"].as_str().unwrap();
-
-    // 4. Test authenticated request
-    let resp = client.get(server.url("/friends"))
-        .bearer_auth(access_token)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::OK);
-
-    // 5. Logout (Revoke)
-    let resp = client.post(server.url("/auth/logout"))
-        .bearer_auth(access_token)
-        .json(&json!({ "refresh_token": refresh_token }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
-
-    // 6. Try refresh (should fail)
-    let resp = client.post(server.url("/auth/refresh"))
-        .json(&json!({ "refresh_token": refresh_token }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
 async fn test_bad_pow_rejection() {
     let server = TestServer::spawn().await;
     let client = Client::new();
+    
+    let mut rng = rand::thread_rng();
+    let signing_key = SigningKey::generate(&mut rng);
+    let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
-    let resp = client.post(server.url("/auth/register"))
+    let resp = client.post(server.url("/register"))
         .json(&json!({
             "username": "bot",
-            "password": "password",
-            "pow_nonce": 0
+            "root_public_key": public_key_hex,
+            "pow_nonce": 0 // Wrong nonce
         }))
         .send()
         .await
         .unwrap();
     
-    let status = resp.status();
-    if status != StatusCode::BAD_REQUEST {
-        let body = resp.text().await.unwrap();
-        panic!("Expected 400, got {}. Body: {}", status, body);
-    }
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
 }

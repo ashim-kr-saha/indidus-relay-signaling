@@ -70,3 +70,25 @@ pub fn solve_pow(username: &str, difficulty: u32) -> u64 {
         nonce += 1;
     }
 }
+
+#[allow(dead_code)]
+pub fn generate_signature(
+    private_key_bytes: &[u8],
+    method: &str,
+    path: &str,
+    timestamp: u64,
+    body: &[u8],
+) -> String {
+    use sha2::{Sha256, Digest};
+    use ed25519_dalek::{SigningKey, Signer};
+
+    let mut hasher = Sha256::new();
+    hasher.update(body);
+    let body_hash = hex::encode(hasher.finalize());
+    
+    let signed_data = format!("{}|{}|{}|{}", method, path, timestamp, body_hash);
+    
+    let signing_key = SigningKey::from_bytes(private_key_bytes.try_into().unwrap());
+    let signature = signing_key.sign(signed_data.as_bytes());
+    hex::encode(signature.to_bytes())
+}

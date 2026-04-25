@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indidus Secure Share</title>
+    <style>
+        :root {
+            --primary: #bb86fc;
+            --primary-variant: #3700b3;
+            --secondary: #03dac6;
+            --background: #121212;
+            --surface: #1e1e1e;
+            --error: #cf6679;
+            --on-background: #ffffff;
+            --on-surface: #ffffff;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: radial-gradient(circle at center, #1e1e2f 0%, #0c0c12 100%);
+            color: var(--on-background);
+            overflow: hidden;
+        }
+
+        .card {
+            background: rgba(30, 30, 30, 0.8);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 3rem;
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+            animation: fadeIn 0.8s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        h1 {
+            font-weight: 700;
+            margin-bottom: 1rem;
+            background: linear-gradient(45deg, #bb86fc, #03dac6);
+            background-clip: test;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p {
+            color: rgba(255, 255, 255, 0.6);
+            line-height: 1.6;
+            margin-bottom: 2rem;
+        }
+
+        .input-group {
+            margin-bottom: 1.5rem;
+            text-align: left;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-size: 0.9rem;
+            color: var(--primary);
+        }
+
+        input {
+            width: 100%;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            color: white;
+            font-size: 1rem;
+            box-sizing: border-box;
+            transition: all 0.3s;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--primary);
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        button {
+            width: 100%;
+            background: linear-gradient(45deg, #6200ee, #bb86fc);
+            color: white;
+            border: none;
+            padding: 14px;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 1rem;
+            font-weight: 600;
+            transition: all 0.3s;
+            box-shadow: 0 4px 15px rgba(98, 0, 238, 0.3);
+        }
+
+        button:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(98, 0, 238, 0.4);
+        }
+
+        button:active:not(:disabled) {
+            transform: translateY(0);
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            filter: grayscale(1);
+        }
+
+        #status {
+            margin-top: 1.5rem;
+            font-size: 0.9rem;
+            min-height: 1.2em;
+        }
+
+        .status-error { color: var(--error); }
+        .status-success { color: var(--secondary); }
+        .status-info { color: var(--primary); }
+
+        .loader {
+            display: none;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>Indidus Secure</h1>
+        <p>This share is end-to-end encrypted. Decryption happens entirely in your browser using Wasm.</p>
+        
+        <div id="pinSection" style="display: none;">
+            <div class="input-group">
+                <label for="pin">Enter Security PIN</label>
+                <input type="password" id="pin" placeholder="••••" maxlength="8">
+            </div>
+        </div>
+
+        <div class="loader" id="loader"></div>
+        <button id="downloadBtn">Unlock & Download</button>
+        <div id="status"></div>
+    </div>
+
+    <script type="module">
+        import init, { download_and_decrypt } from './pkg/indidus_wasm_share_client.js';
+
+        async function run() {
+            await init();
+
+            const downloadBtn = document.getElementById('downloadBtn');
+            const pinSection = document.getElementById('pinSection');
+            const pinInput = document.getElementById('pin');
+            const status = document.getElementById('status');
+            const loader = document.getElementById('loader');
+
+            // Parse URL: https://relay.indidus.app/share/ID#key=HEXKEY&pin=1
+            const hash = window.location.hash.substring(1);
+            const urlParams = new URLSearchParams(hash);
+            const key = urlParams.get('key');
+            const hasPin = urlParams.get('pin') === '1';
+            
+            // Extract share ID from path (assumes /shares/{id} or /share/{id})
+            const pathParts = window.location.pathname.split('/');
+            const shareId = pathParts[pathParts.length - 1];
+            
+            // Relay URL construction
+            const relayUrl = `${window.location.origin}/shares/${shareId}`;
+
+            if (!key || !shareId) {
+                status.className = 'status-error';
+                status.innerText = 'Invalid share link. Please verify the URL.';
+                downloadBtn.disabled = true;
+                return;
+            }
+
+            if (hasPin) {
+                pinSection.style.display = 'block';
+            }
+
+            downloadBtn.addEventListener('click', async () => {
+                const pin = hasPin ? pinInput.value : null;
+                if (hasPin && !pin) {
+                    status.className = 'status-error';
+                    status.innerText = 'PIN is required for this share.';
+                    return;
+                }
+
+                status.className = 'status-info';
+                status.innerText = hasPin ? 'Deriving security key... (takes ~1s)' : 'Decrypting...';
+                loader.style.display = 'block';
+                downloadBtn.disabled = true;
+
+                // Artificial micro-delay to allow UI to update before heavy Wasm compute
+                await new Promise(r => setTimeout(r, 50));
+
+                try {
+                    await download_and_decrypt(relayUrl, key, pin || undefined);
+                    status.className = 'status-success';
+                    status.innerText = 'Success! Decryption complete.';
+                } catch (e) {
+                    status.className = 'status-error';
+                    status.innerText = `Decryption failed. ${e}`;
+                    console.error(e);
+                    downloadBtn.disabled = false;
+                } finally {
+                    loader.style.display = 'none';
+                }
+            });
+        }
+
+        run();
+    </script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-use crate::{Result, Error, server::AppState};
+use crate::{Result, server::AppState};
 use axum::{
     extract::{State, Path},
     http::{HeaderMap, Method, Uri},

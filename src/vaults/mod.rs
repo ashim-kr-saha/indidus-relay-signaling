@@ -45,12 +45,16 @@ pub async fn invite_to_vault(
     let payload: VaultInviteRequest = serde_json::from_slice(&body)
         .map_err(|e| Error::BadRequest(e.to_string()))?;
 
-    let invite_id = state.db.create_vault_invite(
-        &payload.vault_id,
-        &inviter_id,
-        &payload.invitee_username,
-        &payload.role,
-    ).map_err(|e| Error::Internal(e.to_string()))?;
+    let v_id = payload.vault_id.clone();
+    let i_id = inviter_id.clone();
+    let i_user = payload.invitee_username.clone();
+    let role = payload.role.clone();
+    let invite_id = state.db_call(move |db| db.create_vault_invite(
+        &v_id,
+        &i_id,
+        &i_user,
+        &role,
+    )).await.map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(invite_id))
 }
@@ -63,7 +67,8 @@ pub async fn list_vault_invites(
 ) -> Result<Json<Vec<VaultInviteResponse>>> {
     let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let invites = state.db.get_pending_vault_invites(&identity_id)
+    let id = identity_id.clone();
+    let invites = state.db_call(move |db| db.get_pending_vault_invites(&id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(invites))
@@ -78,7 +83,9 @@ pub async fn accept_vault_invite(
 ) -> Result<Json<()>> {
     let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    state.db.respond_to_vault_invite(&invite_id, &identity_id, "accepted")
+    let inv_id = invite_id.clone();
+    let id = identity_id.clone();
+    state.db_call(move |db| db.respond_to_vault_invite(&inv_id, &id, "accepted")).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(()))
@@ -93,7 +100,8 @@ pub async fn list_vault_members(
 ) -> Result<Json<Vec<VaultMemberResponse>>> {
     let _identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[]).await?;
     
-    let members = state.db.get_vault_members(&vault_id)
+    let v_id = vault_id.clone();
+    let members = state.db_call(move |db| db.get_vault_members(&v_id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(Json(members))

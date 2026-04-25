@@ -30,14 +30,20 @@ pub async fn upload_share(
 ) -> Result<impl IntoResponse> {
     let identity_id = crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body).await?;
     
-    let payload: UploadRequest = serde_json::from_slice(&body)
-        .map_err(|e| Error::BadRequest(e.to_string()))?;
+    let ttl_seconds = headers.get("X-Share-TTL")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<u64>().ok());
+    
+    let max_views = headers.get("X-Share-Views")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<i32>().ok());
 
-    let expires_at = payload.ttl_seconds
+    let expires_at = ttl_seconds
         .map(|s| Utc::now() + Duration::seconds(s as i64))
         .or_else(|| Some(Utc::now() + Duration::seconds(state.config.relay.default_ttl as i64)));
 
-    let id = state.db.create_share(&payload.payload, Some(&identity_id), expires_at, payload.max_views)
+    let id_clone = identity_id.clone();
+    let id = state.db_call(move |db| db.create_share(&body, Some(&id_clone), expires_at, max_views)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok((StatusCode::CREATED, axum::Json(UploadResponse { id })))
@@ -47,21 +53,25 @@ pub async fn download_share(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let share = state.db.get_share(&id)
+    let s_id = id.clone();
+    let share = state.db_call(move |db| db.get_share(&s_id)).await
         .map_err(|e| Error::Internal(e.to_string()))?
         .ok_or_else(|| Error::NotFound)?;
 
     if share.expires_at.is_some_and(|exp| Utc::now() > exp) {
-        state.db.delete_share(&id).ok();
+        let s_id = id.clone();
+        state.db_call(move |db| { db.delete_share(&s_id).ok(); }).await;
         return Err(Error::NotFound);
     }
 
     if share.max_views.is_some_and(|max| share.view_count >= max) {
-        state.db.delete_share(&id).ok();
+        let s_id = id.clone();
+        state.db_call(move |db| { db.delete_share(&s_id).ok(); }).await;
         return Err(Error::NotFound);
     }
 
-    state.db.increment_share_view_count(&id)
+    let s_id = id.clone();
+    state.db_call(move |db| db.increment_share_view_count(&s_id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(share.payload)
@@ -71,7 +81,8 @@ pub async fn acknowledge_share(
     State(state): State<Arc<AppState>>,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    state.db.delete_share(&id)
+    let s_id = id.clone();
+    state.db_call(move |db| db.delete_share(&s_id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(StatusCode::OK)
@@ -88,7 +99,8 @@ pub async fn revoke_share(
     
     // TODO: Verify identity_id owns the share
     
-    state.db.delete_share(&id)
+    let s_id = id.clone();
+    state.db_call(move |db| db.delete_share(&s_id)).await
         .map_err(|e| Error::Internal(e.to_string()))?;
 
     Ok(StatusCode::NO_CONTENT)

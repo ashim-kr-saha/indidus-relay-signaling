@@ -11,6 +11,7 @@ pub mod relay;
 pub mod server;
 pub mod signaling;
 pub mod turn;
+pub mod viewer;
 pub mod audit;
 pub mod push;
 pub mod vaults;
