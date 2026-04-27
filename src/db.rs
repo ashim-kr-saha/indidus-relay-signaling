@@ -1,9 +1,9 @@
 use crate::models::user::{AuditLogEntry, DeviceResponse};
 use chrono::{DateTime, Utc};
+use mini_moka::sync::Cache;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::OptionalExtension;
-use mini_moka::sync::Cache;
 use std::path::Path;
 use tracing::info;
 
@@ -38,7 +38,10 @@ impl Db {
             .max_capacity(1000)
             .time_to_idle(std::time::Duration::from_secs(300))
             .build();
-        let db = Self { pool, identity_cache };
+        let db = Self {
+            pool,
+            identity_cache,
+        };
         db.init_schema()?;
         Ok(db)
     }
@@ -256,10 +259,10 @@ impl Db {
         }
 
         let info = self.get_identity_by_public_key_db(public_key)?;
-        
+
         // Cache the result (even if None, to prevent repetitive negative lookups)
         self.identity_cache.insert(key, info.clone());
-        
+
         Ok(info)
     }
 
@@ -305,10 +308,10 @@ impl Db {
 
     pub fn delete_device(&self, device_id: &str, identity_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        
-        // We don't know the public key here without querying, 
-        // so for security we clear the whole identity cache or 
-        // just let it expire. Since device deletion is rare, 
+
+        // We don't know the public key here without querying,
+        // so for security we clear the whole identity cache or
+        // just let it expire. Since device deletion is rare,
         // clearing is safest.
         conn.execute(
             "DELETE FROM devices WHERE id = ?1 AND identity_id = ?2",
@@ -402,25 +405,37 @@ impl Db {
         target_device_id: &str,
     ) -> anyhow::Result<bool> {
         let conn = self.pool.get()?;
-        
-        // 1. Get identity IDs for both devices
-        let from_identity: String = conn.query_row(
-            "SELECT identity_id FROM devices WHERE id = ?1",
-            [from_device_id],
-            |row| row.get(0),
-        ).map_err(|e| {
-            tracing::error!("Auth check failed: source device {} not found: {}", from_device_id, e);
-            anyhow::anyhow!("Source device not found")
-        })?;
 
-        let target_identity: String = conn.query_row(
-            "SELECT identity_id FROM devices WHERE id = ?1",
-            [target_device_id],
-            |row| row.get(0),
-        ).map_err(|e| {
-            tracing::warn!("Auth check: target device {} not found: {}", target_device_id, e);
-            anyhow::anyhow!("Target device not found")
-        })?;
+        // 1. Get identity IDs for both devices
+        let from_identity: String = conn
+            .query_row(
+                "SELECT identity_id FROM devices WHERE id = ?1",
+                [from_device_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| {
+                tracing::error!(
+                    "Auth check failed: source device {} not found: {}",
+                    from_device_id,
+                    e
+                );
+                anyhow::anyhow!("Source device not found")
+            })?;
+
+        let target_identity: String = conn
+            .query_row(
+                "SELECT identity_id FROM devices WHERE id = ?1",
+                [target_device_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| {
+                tracing::warn!(
+                    "Auth check: target device {} not found: {}",
+                    target_device_id,
+                    e
+                );
+                anyhow::anyhow!("Target device not found")
+            })?;
 
         // 2. If same identity, allowed (multi-device)
         if from_identity == target_identity {
@@ -434,11 +449,13 @@ impl Db {
             (&target_identity, &from_identity)
         };
 
-        let status: Option<String> = conn.query_row(
-            "SELECT status FROM friends WHERE identity_id_1 = ?1 AND identity_id_2 = ?2",
-            [u1, u2],
-            |row| row.get(0),
-        ).optional()?;
+        let status: Option<String> = conn
+            .query_row(
+                "SELECT status FROM friends WHERE identity_id_1 = ?1 AND identity_id_2 = ?2",
+                [u1, u2],
+                |row| row.get(0),
+            )
+            .optional()?;
 
         Ok(status.is_some_and(|s| s == "confirmed"))
     }
@@ -461,7 +478,7 @@ impl Db {
 
     pub fn enqueue_mailbox_message(&self, device_id: &str, payload: &[u8]) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
-        
+
         // Check mailbox quota (max 100 messages or 10MB total per device)
         let (count, total_size): (i64, i64) = conn.query_row(
             "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM mailbox WHERE target_device_id = ?1",
@@ -470,7 +487,9 @@ impl Db {
         )?;
 
         if count >= 100 {
-            return Err(anyhow::anyhow!("Mailbox message count quota exceeded (max 100)"));
+            return Err(anyhow::anyhow!(
+                "Mailbox message count quota exceeded (max 100)"
+            ));
         }
         if total_size + (payload.len() as i64) > 10 * 1024 * 1024 {
             return Err(anyhow::anyhow!("Mailbox size quota exceeded (max 10MB)"));

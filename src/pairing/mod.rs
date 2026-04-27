@@ -46,7 +46,9 @@ pub async fn respond_pairing(
 ) -> Result<Json<RespondPairingResponse>> {
     if let Some(session) = state.pairing_sessions.get(&session_id) {
         let msg_a = session.0.clone();
-        state.pairing_sessions.insert(session_id, (msg_a.clone(), Some(payload.message)));
+        state
+            .pairing_sessions
+            .insert(session_id, (msg_a.clone(), Some(payload.message)));
         Ok(Json(RespondPairingResponse { message: msg_a }))
     } else {
         Err(Error::NotFound)

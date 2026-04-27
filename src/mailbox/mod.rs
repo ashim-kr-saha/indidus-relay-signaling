@@ -29,7 +29,9 @@ pub async fn enqueue_message(
     body: Bytes,
 ) -> Result<impl IntoResponse> {
     if body.len() > 1024 * 1024 {
-        return Err(Error::BadRequest("Mailbox message too large (max 1MB)".to_string()));
+        return Err(Error::BadRequest(
+            "Mailbox message too large (max 1MB)".to_string(),
+        ));
     }
     let _identity_id =
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body)

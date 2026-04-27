@@ -108,9 +108,7 @@ pub async fn list_vault_members(
             .await?;
 
     let v_id = vault_id.clone();
-    let members = state
-        .db_call(move |db| db.get_vault_members(&v_id))
-        .await?;
+    let members = state.db_call(move |db| db.get_vault_members(&v_id)).await?;
 
     Ok(Json(members))
 }

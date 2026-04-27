@@ -66,9 +66,7 @@ pub async fn list_friends(
             .await?;
 
     let id = identity_id.clone();
-    let friends = state
-        .db_call(move |db| db.get_friends(&id))
-        .await?;
+    let friends = state.db_call(move |db| db.get_friends(&id)).await?;
 
     Ok(axum::Json(friends))
 }
@@ -138,9 +136,7 @@ pub async fn block_friend(
         .ok_or_else(|| Error::NotFound)?;
 
     let id = identity_id.clone();
-    state
-        .db_call(move |db| db.block_friend(&id, &f_id))
-        .await?;
+    state.db_call(move |db| db.block_friend(&id, &f_id)).await?;
 
     Ok(StatusCode::OK)
 }

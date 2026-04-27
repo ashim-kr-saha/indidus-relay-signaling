@@ -18,9 +18,7 @@ pub async fn get_audit_logs(
             .await?;
 
     let id = identity_id.clone();
-    let logs = state
-        .db_call(move |db| db.get_audit_logs(&id))
-        .await?;
+    let logs = state.db_call(move |db| db.get_audit_logs(&id)).await?;
 
     Ok(Json(logs))
 }

@@ -89,7 +89,9 @@ pub fn validate_request_signature(
     let body_hash_bytes = hasher.finalize();
     let body_hash_hex = hex::encode(body_hash_bytes);
 
-    let mut signed_data = String::with_capacity(method.len() + path.len() + timestamp.len() + body_hash_hex.len() + 4);
+    let mut signed_data = String::with_capacity(
+        method.len() + path.len() + timestamp.len() + body_hash_hex.len() + 4,
+    );
     signed_data.push_str(method);
     signed_data.push('|');
     signed_data.push_str(path);
@@ -172,13 +174,15 @@ fn verify_pow(username: &str, nonce: u64, difficulty: u32) -> Result<()> {
 #[inline(always)]
 fn check_difficulty_fast(hash: &[u8], difficulty: u32) -> bool {
     let first_64 = u64::from_be_bytes(hash[0..8].try_into().unwrap());
-    
+
     if difficulty <= 64 {
         return first_64.leading_zeros() >= difficulty;
     }
-    
-    if first_64 != 0 { return false; }
-    
+
+    if first_64 != 0 {
+        return false;
+    }
+
     let full_bytes = (difficulty / 8) as usize;
     let remaining_bits = difficulty % 8;
 
@@ -196,19 +200,12 @@ fn check_difficulty_fast(hash: &[u8], difficulty: u32) -> bool {
 }
 
 pub fn verify_signature(message: &str, public_key_bytes: &[u8], signature_bytes: &[u8]) -> bool {
-    let public_key = match VerifyingKey::from_bytes(
-        public_key_bytes
-            .try_into()
-            .unwrap_or(&[0u8; 32]),
-    ) {
-        Ok(k) => k,
-        Err(_) => return false,
-    };
-    let signature = Signature::from_bytes(
-        signature_bytes
-            .try_into()
-            .unwrap_or(&[0u8; 64]),
-    );
+    let public_key =
+        match VerifyingKey::from_bytes(public_key_bytes.try_into().unwrap_or(&[0u8; 32])) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+    let signature = Signature::from_bytes(signature_bytes.try_into().unwrap_or(&[0u8; 64]));
     public_key.verify(message.as_bytes(), &signature).is_ok()
 }
 

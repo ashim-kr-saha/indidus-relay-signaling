@@ -32,9 +32,7 @@ fn bench_signaling_routing(c: &mut Criterion) {
     };
 
     c.bench_function("route_message_1000_peers", |b| {
-        b.iter(|| {
-            rt.block_on(async { route_message(&state, &target_id, msg.clone()).await })
-        })
+        b.iter(|| rt.block_on(async { route_message(&state, &target_id, msg.clone()).await }))
     });
 }
 

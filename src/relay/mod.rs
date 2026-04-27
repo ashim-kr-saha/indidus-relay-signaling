@@ -104,9 +104,7 @@ pub async fn acknowledge_share(
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
     let s_id = id.clone();
-    state
-        .db_call(move |db| db.delete_share(&s_id))
-        .await?;
+    state.db_call(move |db| db.delete_share(&s_id)).await?;
 
     Ok(StatusCode::OK)
 }
@@ -129,13 +127,13 @@ pub async fn revoke_share(
         .ok_or_else(|| Error::NotFound)?;
 
     if share.owner_identity_id.is_none() || share.owner_identity_id.unwrap() != identity_id {
-        return Err(Error::Auth("Not authorized to revoke this share".to_string()));
+        return Err(Error::Auth(
+            "Not authorized to revoke this share".to_string(),
+        ));
     }
 
     let s_id = id.clone();
-    state
-        .db_call(move |db| db.delete_share(&s_id))
-        .await?;
+    state.db_call(move |db| db.delete_share(&s_id)).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
