@@ -115,7 +115,8 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/mailbox/{device_id}", get(crate::mailbox::get_mailbox))
         .route(
             "/pairing/initiate",
-            post(crate::pairing::initiate_pairing).layer(GovernorLayer::new(governor_config.clone())),
+            post(crate::pairing::initiate_pairing)
+                .layer(GovernorLayer::new(governor_config.clone())),
         )
         .route(
             "/pairing/{session_id}/respond",
