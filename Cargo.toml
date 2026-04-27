@@ -105,9 +105,3 @@ harness = false
 [[bench]]
 name = "relay_bench"
 harness = false
-
-[profile.release]
-lto = "thin"
-codegen-units = 1
-strip = true
-panic = "abort"
