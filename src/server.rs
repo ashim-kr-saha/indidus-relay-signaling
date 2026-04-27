@@ -71,83 +71,71 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/health", get(health_check))
         .route(
             "/register",
-            post(crate::auth::register_identity).layer(GovernorLayer {
-                config: governor_config.clone(),
-            }),
+            post(crate::auth::register_identity).layer(GovernorLayer::new(governor_config.clone())),
         )
         .route(
             "/devices",
             post(crate::devices::register_device)
                 .get(crate::devices::list_devices)
-                .layer(GovernorLayer {
-                    config: governor_config.clone(),
-                }),
+                .layer(GovernorLayer::new(governor_config.clone())),
         )
         .route(
-            "/devices/:id",
-            post(crate::devices::revoke_device).layer(GovernorLayer {
-                config: governor_config.clone(),
-            }),
+            "/devices/{id}",
+            post(crate::devices::revoke_device).layer(GovernorLayer::new(governor_config.clone())),
         )
         .route(
             "/friends",
             post(crate::friends::send_friend_request)
                 .get(crate::friends::list_friends)
-                .layer(GovernorLayer {
-                    config: governor_config.clone(),
-                }),
+                .layer(GovernorLayer::new(governor_config.clone())),
         )
         .route(
-            "/friends/accept/:username",
+            "/friends/accept/{username}",
             post(crate::friends::accept_friend_request),
         )
-        .route("/friends/:username", delete(crate::friends::remove_friend))
+        .route("/friends/{username}", delete(crate::friends::remove_friend))
         .route("/turn", get(crate::turn::get_turn_credentials))
         .route("/audit", get(crate::audit::get_audit_logs))
-        .route("/push/:device_id", get(crate::push::push_stream))
+        .route("/push/{device_id}", get(crate::push::push_stream))
         .route(
             "/vaults/invite",
-            post(crate::vaults::invite_to_vault).layer(GovernorLayer {
-                config: governor_config.clone(),
-            }),
+            post(crate::vaults::invite_to_vault).layer(GovernorLayer::new(governor_config.clone())),
         )
         .route("/vaults/invites", get(crate::vaults::list_vault_invites))
         .route(
-            "/vaults/invites/:id/accept",
+            "/vaults/invites/{id}/accept",
             post(crate::vaults::accept_vault_invite),
         )
         .route(
-            "/vaults/:id/members",
+            "/vaults/{id}/members",
             get(crate::vaults::list_vault_members),
         )
         .route("/ws", get(crate::signaling::signaling_handler))
         .route("/mailbox", post(crate::mailbox::enqueue_message))
-        .route("/mailbox/:device_id", get(crate::mailbox::get_mailbox))
+        .route("/mailbox/{device_id}", get(crate::mailbox::get_mailbox))
         .route(
             "/pairing/initiate",
-            post(crate::pairing::initiate_pairing).layer(GovernorLayer {
-                config: governor_config.clone(),
-            }),
+            post(crate::pairing::initiate_pairing).layer(GovernorLayer::new(governor_config.clone())),
         )
         .route(
-            "/pairing/:session_id/respond",
+            "/pairing/{session_id}/respond",
             post(crate::pairing::respond_pairing),
         )
         .route(
-            "/pairing/:session_id/poll",
+            "/pairing/{session_id}/poll",
             get(crate::pairing::poll_pairing),
         )
         .route("/shares", post(crate::relay::upload_share))
         .route(
-            "/shares/:id",
+            "/shares/{id}",
             get(crate::relay::download_share).delete(crate::relay::revoke_share),
         )
         .route(
-            "/shares/:id/acknowledge",
+            "/shares/{id}/acknowledge",
             post(crate::relay::acknowledge_share),
         )
-        .route("/v/:id", get(viewer::serve_viewer))
-        .route("/pkg/*path", get(viewer::static_handler))
+        .route("/v/{id}", get(viewer::serve_viewer))
+        .route("/pkg/{*path}", get(viewer::static_handler))
         .route("/metrics", get(metrics_handler))
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB global limit

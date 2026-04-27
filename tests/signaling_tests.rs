@@ -115,7 +115,8 @@ async fn test_mailbox_and_signaling() {
                 "timestamp": timestamp,
                 "signature": sig_hex
             })
-            .to_string(),
+            .to_string()
+            .into(),
         ))
         .await
         .unwrap();

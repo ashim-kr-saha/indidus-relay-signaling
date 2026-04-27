@@ -6,7 +6,7 @@ use axum::{
 };
 use base64::prelude::*;
 use chrono::Utc;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use serde::Serialize;
 use sha1::Sha1;
 use std::sync::Arc;
@@ -39,7 +39,7 @@ pub async fn get_turn_credentials(
     let username = format!("{}:{}", timestamp, identity_id);
 
     let mut mac = HmacSha1::new_from_slice(state.config.turn.secret.as_bytes())
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .map_err(|e: hmac::digest::InvalidLength| Error::Internal(e.to_string()))?;
     mac.update(username.as_bytes());
     let result = mac.finalize();
     let password = BASE64_STANDARD.encode(result.into_bytes());
