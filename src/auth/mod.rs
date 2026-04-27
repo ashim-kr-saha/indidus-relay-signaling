@@ -36,14 +36,16 @@ pub async fn register_identity(
         return Err(Error::BadRequest("Public key must be 32 bytes".to_string()));
     }
 
-    // 3. Create Identity and Primary Device atomically
     let username = payload.username.clone();
     let pk = public_key_bytes.clone();
-    let _identity_id = state
+    let identity_id = state
         .db_call(move |db| db.create_identity_with_primary_device(&username, &pk))
         .await?;
 
-    Ok(StatusCode::CREATED)
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({ "id": identity_id })),
+    ))
 }
 
 /// Validates a request signature.

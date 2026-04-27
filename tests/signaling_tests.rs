@@ -16,7 +16,7 @@ async fn test_mailbox_and_signaling() {
     let alice_key = SigningKey::generate(&mut rand::thread_rng());
     let alice_pk_hex = hex::encode(alice_key.verifying_key().as_bytes());
     let alice_pow = solve_pow("alice", server.config.auth.registration_difficulty);
-    client
+    let resp = client
         .post(server.url("/register"))
         .json(
             &json!({"username": "alice", "root_public_key": alice_pk_hex, "pow_nonce": alice_pow}),
@@ -24,17 +24,22 @@ async fn test_mailbox_and_signaling() {
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let _ = resp.json::<serde_json::Value>().await.unwrap();
 
     // 2. Setup Bob
     let bob_key = SigningKey::generate(&mut rand::thread_rng());
     let bob_pk_hex = hex::encode(bob_key.verifying_key().as_bytes());
     let bob_pow = solve_pow("bob", server.config.auth.registration_difficulty);
-    client
+    let resp = client
         .post(server.url("/register"))
         .json(&json!({"username": "bob", "root_public_key": bob_pk_hex, "pow_nonce": bob_pow}))
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let bob_data: serde_json::Value = resp.json().await.unwrap();
+    let bob_id = bob_data["id"].as_str().unwrap().to_string();
 
     // Fetch device ID for Bob
     let timestamp = SystemTime::now()
@@ -51,6 +56,7 @@ async fn test_mailbox_and_signaling() {
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
     let bob_devices: Vec<serde_json::Value> = resp.json().await.unwrap();
     let bob_device_id = bob_devices[0]["id"].as_str().unwrap().to_string();
 
@@ -93,23 +99,21 @@ async fn test_mailbox_and_signaling() {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let signature = generate_signature(
-        &bob_key.to_bytes(),
-        "WS_INIT",
-        &bob_device_id,
-        timestamp,
-        "bob".as_bytes(),
-    );
+
+    // Correct signature for WS_INIT: format!("WS_INIT:{}:{}:{}", device_id, identity_id, timestamp)
+    use ed25519_dalek::Signer;
+    let msg_to_sign = format!("WS_INIT:{}:{}:{}", bob_device_id, bob_id, timestamp);
+    let signature = bob_key.sign(msg_to_sign.as_bytes());
+    let sig_hex = hex::encode(signature.to_bytes());
 
     ws_stream
         .send(Message::Text(
             json!({
                 "type": "init",
-                "identity_id": "bob",
+                "identity_id": bob_id,
                 "device_id": bob_device_id,
-                "public_key": bob_pk_hex,
-                "timestamp": timestamp.to_string(),
-                "signature": signature
+                "timestamp": timestamp,
+                "signature": sig_hex
             })
             .to_string(),
         ))

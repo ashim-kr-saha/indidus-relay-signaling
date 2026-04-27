@@ -1,7 +1,9 @@
 mod common;
-use common::{TestServer, solve_pow};
+use common::{TestServer, generate_signature, solve_pow};
+use ed25519_dalek::SigningKey;
 use reqwest::{Client, StatusCode};
 use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn test_invalid_pow_rejection() {
@@ -9,25 +11,26 @@ async fn test_invalid_pow_rejection() {
     let client = Client::new();
     let username = "bad_pow_user";
 
+    // 1. Generate Key
+    let mut rng = rand::thread_rng();
+    let signing_key = SigningKey::generate(&mut rng);
+    let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
+
     // Send a wrong nonce (0 is unlikely to work for difficulty 2)
     let resp = client
-        .post(server.url("/auth/register"))
+        .post(server.url("/register"))
         .json(&json!({
             "username": username,
-            "password": "password123",
+            "root_public_key": public_key_hex,
             "pow_nonce": 0
         }))
         .send()
         .await
         .unwrap();
 
-    // If difficulty is 2, nonce 0 has 1 in 4 chance of working.
-    // We'll use a username that definitely fails with nonce 0 for difficulty 2.
-    // Or we just check that if it failed, it has the right message.
-    if resp.status() == StatusCode::BAD_REQUEST {
-        let body = resp.text().await.unwrap();
-        assert!(body.contains("Insufficient Proof-of-Work"));
-    }
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Insufficient Proof-of-Work"));
 }
 
 #[tokio::test]
@@ -35,36 +38,52 @@ async fn test_expired_share_retrieval() {
     let server = TestServer::spawn().await;
     let client = Client::new();
 
-    // 1. Register & Login to get token
+    // 1. Register to get identity
     let username = "alice";
-    let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
-    client
-        .post(server.url("/auth/register"))
-        .json(&json!({"username": username, "password": "password", "pow_nonce": pow_nonce}))
-        .send()
-        .await
-        .unwrap();
-    let resp = client
-        .post(server.url("/auth/login"))
-        .json(&json!({"username": username, "password": "password"}))
-        .send()
-        .await
-        .unwrap();
-    let auth: serde_json::Value = resp.json().await.unwrap();
-    let token = auth["access_token"].as_str().unwrap();
+    let mut rng = rand::thread_rng();
+    let signing_key = SigningKey::generate(&mut rng);
+    let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
-    // 2. Upload share with 1 second TTL
+    let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
     let resp = client
-        .post(server.url("/shares"))
-        .bearer_auth(token)
+        .post(server.url("/register"))
         .json(&json!({
-            "payload": vec![1, 2, 3, 4],
-            "ttl_seconds": 1,
-            "max_views": 10
+            "username": username,
+            "root_public_key": &public_key_hex,
+            "pow_nonce": pow_nonce
         }))
         .send()
         .await
         .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+
+    // 2. Upload share with 1 second TTL
+    let payload = b"test_payload";
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let signature = generate_signature(
+        &signing_key.to_bytes(),
+        "POST",
+        "/shares",
+        timestamp,
+        payload,
+    );
+
+    let resp = client
+        .post(server.url("/shares"))
+        .header("X-Identity", username)
+        .header("X-Public-Key", &public_key_hex)
+        .header("X-Timestamp", timestamp.to_string())
+        .header("X-Signature", signature)
+        .header("X-Share-TTL", "1")
+        .body(payload.to_vec())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), StatusCode::CREATED);
     let share_data: serde_json::Value = resp.json().await.unwrap();
     let share_id = share_data["id"].as_str().unwrap();
 
@@ -86,10 +105,8 @@ async fn test_unauthorized_access() {
     let server = TestServer::spawn().await;
     let client = Client::new();
 
-    // Attempt to access a protected route without token
+    // Attempt to access a protected route without authentication headers
     let resp = client.get(server.url("/devices")).send().await.unwrap();
 
-    // Axum's TypedHeader returns 400 if missing.
-    let status = resp.status();
-    assert!(status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST);
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }

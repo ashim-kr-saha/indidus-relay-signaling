@@ -18,7 +18,7 @@ impl TestServer {
         config.server.host = "127.0.0.1".to_string();
         config.server.port = 0; // OS picks free port
         config.database.path = db_path;
-        config.auth.registration_difficulty = 2; // Low for fast tests
+        config.auth.registration_difficulty = 10; // High enough to avoid accidental success
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(tag = "type", content = "payload")]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum SignalingMessage {
     Init {
         device_id: String,
@@ -94,13 +94,8 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     signature,
                 } => {
                     let d_id = device_id.clone();
-                    let info = match state
-                        .db_call(move |db| {
-                            db.get_identity_by_public_key(&hex::decode(&d_id).unwrap_or_default())
-                        })
-                        .await
-                    {
-                        Ok(Some(i)) => i,
+                    let device = match state.db_call(move |db| db.get_device_by_id(&d_id)).await {
+                        Ok(Some(d)) => d,
                         _ => {
                             let _ = tx
                                 .send(SignalingMessage::Error {
@@ -111,7 +106,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         }
                     };
 
-                    if info.id != identity_id {
+                    if device.user_id != identity_id {
                         let _ = tx
                             .send(SignalingMessage::Error {
                                 message: "Identity mismatch".to_string(),
@@ -122,10 +117,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
 
                     let msg_to_sign =
                         format!("WS_INIT:{}:{}:{}", device_id, identity_id, timestamp);
-                    let pk_bytes = hex::decode(&device_id).unwrap_or_default();
                     let sig_bytes = hex::decode(&signature).unwrap_or_default();
 
-                    if crate::auth::verify_signature(&msg_to_sign, &pk_bytes, &sig_bytes) {
+                    if crate::auth::verify_signature(&msg_to_sign, &device.public_key, &sig_bytes) {
                         current_device_id = Some(device_id.clone());
                         state.peers.insert(device_id.clone(), tx.clone());
                         tracing::info!("Device {} registered for signaling", device_id);

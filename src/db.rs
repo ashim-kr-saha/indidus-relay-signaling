@@ -248,6 +248,28 @@ impl Db {
         Ok(devices)
     }
 
+    pub fn get_device_by_id(
+        &self,
+        device_id: &str,
+    ) -> anyhow::Result<Option<crate::models::user::Device>> {
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, identity_id, public_key, name, last_active FROM devices WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query([device_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(Some(crate::models::user::Device {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                public_key: row.get(2)?,
+                name: row.get(3)?,
+                last_active: row.get(4)?,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub fn get_identity_by_public_key(
         &self,
         public_key: &[u8],

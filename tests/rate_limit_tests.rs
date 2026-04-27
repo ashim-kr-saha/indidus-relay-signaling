@@ -13,16 +13,19 @@ async fn test_registration_rate_limiting() {
 
     let mut success_count = 0;
     let mut throttled_count = 0;
+    let mut rng = rand::thread_rng();
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut rng);
+    let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
     for i in 0..10 {
         let unique_username = format!("{}_{}", username, i);
         let pow_nonce = solve_pow(&unique_username, server.config.auth.registration_difficulty);
 
         let resp = client
-            .post(server.url("/auth/register"))
+            .post(server.url("/register"))
             .json(&json!({
                 "username": unique_username,
-                "password": "password123",
+                "root_public_key": public_key_hex,
                 "pow_nonce": pow_nonce
             }))
             .send()
