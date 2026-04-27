@@ -22,14 +22,13 @@ pub async fn push_stream(
     let stream = stream::unfold((state, device_id), |(state, device_id)| async move {
         loop {
             // Check mailbox
-            if let Ok(messages) = state.db.get_mailbox_messages(&device_id)
+            if let Ok(messages) = state.db.get_and_clear_mailbox(&device_id)
                 && !messages.is_empty()
             {
                 let event = Event::default()
                     .data(serde_json::to_string(&messages).unwrap_or_default())
                     .event("mailbox_update");
 
-                let _ = state.db.clear_mailbox(&device_id);
                 return Some((Ok(event), (state, device_id)));
             }
 

@@ -4,112 +4,133 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
+    http::HeaderMap,
     response::IntoResponse,
 };
-use futures::{sink::SinkExt, stream::StreamExt};
+use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type")]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(tag = "type", content = "payload")]
 pub enum SignalingMessage {
-    #[serde(rename = "init")]
     Init {
         device_id: String,
         identity_id: String,
-        timestamp: String,
-        public_key: String, // Hex encoded Device Public Key
-        signature: String,  // Hex encoded signature over "WS_INIT|device_id|identity_id|timestamp"
+        timestamp: u64,
+        signature: String,
     },
-    #[serde(rename = "offer")]
+    InitSuccess,
     Offer {
         target_device_id: String,
         sdp: String,
         from_device_id: Option<String>,
     },
-    #[serde(rename = "answer")]
     Answer {
         target_device_id: String,
         sdp: String,
         from_device_id: Option<String>,
     },
-    #[serde(rename = "candidate")]
     Candidate {
         target_device_id: String,
         candidate: String,
         from_device_id: Option<String>,
     },
-    #[serde(rename = "init_success")]
-    InitSuccess,
-    #[serde(rename = "error")]
-    Error { message: String },
-    #[serde(rename = "mailbox_push")]
-    MailboxPush { payload: Vec<u8> },
+    MailboxPush {
+        payload: Vec<u8>,
+    },
+    Error {
+        message: String,
+    },
 }
 
-pub async fn ws_handler(
+pub async fn signaling_handler(
     ws: WebSocketUpgrade,
+    _headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
 async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
-    let (mut ws_sender, mut ws_receiver) = socket.split();
-    let (tx, mut rx) = mpsc::unbounded_channel::<SignalingMessage>();
+    let (mut sender, mut receiver) = socket.split();
+    let (tx, mut rx) = mpsc::channel::<SignalingMessage>(100);
 
-    let mut current_device_id: Option<String> = None;
-
-    // Task for sending messages to this WebSocket
+    // Send task
     let send_task = tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
-            let text = serde_json::to_string(&msg).unwrap();
-            if ws_sender.send(Message::Text(text)).await.is_err() {
+            let json = serde_json::to_string(&msg).unwrap_or_default();
+            if sender.send(Message::Text(json)).await.is_err() {
                 break;
             }
         }
     });
 
-    while let Some(Ok(msg)) = ws_receiver.next().await {
-        let text = match msg {
-            Message::Text(t) => t,
-            _ => continue,
-        };
+    let mut current_device_id: Option<String> = None;
 
-        if let Ok(sig_msg) = serde_json::from_str::<SignalingMessage>(&text) {
+    while let Some(Ok(msg)) = receiver.next().await {
+        if let Message::Text(text) = msg {
+            // Enforce 128KB limit per message
+            if text.len() > 128 * 1024 {
+                let _ = tx
+                    .send(SignalingMessage::Error {
+                        message: "Message too large".to_string(),
+                    })
+                    .await;
+                continue;
+            }
+
+            let sig_msg: SignalingMessage = match serde_json::from_str(&text) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+
             match sig_msg {
                 SignalingMessage::Init {
                     device_id,
                     identity_id,
                     timestamp,
-                    public_key,
                     signature,
                 } => {
-                    let pk_bytes = hex::decode(&public_key).unwrap_or_default();
-
-                    let mut is_valid = false;
-                    if let Ok(Some(info)) = state.db.get_identity_by_public_key(&pk_bytes)
-                        && info.username == identity_id
-                        && crate::auth::validate_request_signature(
-                            &pk_bytes,
-                            "WS_INIT",
-                            &device_id,
-                            &timestamp,
-                            identity_id.as_bytes(),
-                            &signature,
-                        )
-                        .is_ok()
+                    let d_id = device_id.clone();
+                    let info = match state
+                        .db_call(move |db| {
+                            db.get_identity_by_public_key(&hex::decode(&d_id).unwrap_or_default())
+                        })
+                        .await
                     {
-                        is_valid = true;
+                        Ok(Some(i)) => i,
+                        _ => {
+                            let _ = tx
+                                .send(SignalingMessage::Error {
+                                    message: "Device not recognized".to_string(),
+                                })
+                                .await;
+                            continue;
+                        }
+                    };
+
+                    if info.id != identity_id {
+                        let _ = tx
+                            .send(SignalingMessage::Error {
+                                message: "Identity mismatch".to_string(),
+                            })
+                            .await;
+                        continue;
                     }
 
-                    if is_valid {
+                    let msg_to_sign =
+                        format!("WS_INIT:{}:{}:{}", device_id, identity_id, timestamp);
+                    let pk_bytes = hex::decode(&device_id).unwrap_or_default();
+                    let sig_bytes = hex::decode(&signature).unwrap_or_default();
+
+                    if crate::auth::verify_signature(&msg_to_sign, &pk_bytes, &sig_bytes) {
                         current_device_id = Some(device_id.clone());
                         state.peers.insert(device_id.clone(), tx.clone());
                         tracing::info!("Device {} registered for signaling", device_id);
 
-                        let _ = tx.send(SignalingMessage::InitSuccess);
+                        let _ = tx.send(SignalingMessage::InitSuccess).await;
 
                         let state_clone = Arc::clone(&state);
                         let d_id = device_id.clone();
@@ -117,29 +138,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                         tokio::spawn(async move {
                             let s_c = Arc::clone(&state_clone);
                             let d_id_c = d_id.clone();
-                            if let Ok(messages) = tokio::task::spawn_blocking(move || {
-                                s_c.db.get_mailbox_messages(&d_id_c)
-                            })
-                            .await
-                            .unwrap()
+                            if let Ok(messages) = s_c
+                                .db_call(move |db| db.get_and_clear_mailbox(&d_id_c))
+                                .await
                             {
                                 for msg in messages {
-                                    let _ = tx_clone.send(SignalingMessage::MailboxPush {
-                                        payload: msg.payload,
-                                    });
+                                    let _ = tx_clone
+                                        .send(SignalingMessage::MailboxPush {
+                                            payload: msg.payload,
+                                        })
+                                        .await;
                                 }
-                                let s_c2 = Arc::clone(&state_clone);
-                                let d_id_c2 = d_id.clone();
-                                let _ = tokio::task::spawn_blocking(move || {
-                                    s_c2.db.clear_mailbox(&d_id_c2)
-                                })
-                                .await;
                             }
                         });
                     } else {
-                        let _ = tx.send(SignalingMessage::Error {
-                            message: "Invalid signature or device key".to_string(),
-                        });
+                        let _ = tx
+                            .send(SignalingMessage::Error {
+                                message: "Invalid signature or device key".to_string(),
+                            })
+                            .await;
                     }
                 }
                 SignalingMessage::Offer {
@@ -148,16 +165,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     ..
                 } => {
                     if let Some(from_id) = &current_device_id {
-                        route_message(
-                            &state,
-                            target_device_id.clone(),
-                            SignalingMessage::Offer {
-                                target_device_id: target_device_id.clone(),
-                                sdp,
-                                from_device_id: Some(from_id.clone()),
-                            },
-                        )
-                        .await;
+                        let f_id = from_id.clone();
+                        let t_id = target_device_id.clone();
+                        let authorized = state
+                            .db_call(move |db| db.is_authorized_to_message(&f_id, &t_id))
+                            .await
+                            .unwrap_or(false);
+
+                        if authorized {
+                            route_message(
+                                &state,
+                                &target_device_id,
+                                SignalingMessage::Offer {
+                                    target_device_id: target_device_id.clone(),
+                                    sdp,
+                                    from_device_id: Some(from_id.clone()),
+                                },
+                            )
+                            .await;
+                        }
                     }
                 }
                 SignalingMessage::Answer {
@@ -166,16 +192,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     ..
                 } => {
                     if let Some(from_id) = &current_device_id {
-                        route_message(
-                            &state,
-                            target_device_id.clone(),
-                            SignalingMessage::Answer {
-                                target_device_id: target_device_id.clone(),
-                                sdp,
-                                from_device_id: Some(from_id.clone()),
-                            },
-                        )
-                        .await;
+                        let f_id = from_id.clone();
+                        let t_id = target_device_id.clone();
+                        let authorized = state
+                            .db_call(move |db| db.is_authorized_to_message(&f_id, &t_id))
+                            .await
+                            .unwrap_or(false);
+
+                        if authorized {
+                            route_message(
+                                &state,
+                                &target_device_id,
+                                SignalingMessage::Answer {
+                                    target_device_id: target_device_id.clone(),
+                                    sdp,
+                                    from_device_id: Some(from_id.clone()),
+                                },
+                            )
+                            .await;
+                        }
                     }
                 }
                 SignalingMessage::Candidate {
@@ -184,16 +219,25 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     ..
                 } => {
                     if let Some(from_id) = &current_device_id {
-                        route_message(
-                            &state,
-                            target_device_id.clone(),
-                            SignalingMessage::Candidate {
-                                target_device_id: target_device_id.clone(),
-                                candidate,
-                                from_device_id: Some(from_id.clone()),
-                            },
-                        )
-                        .await;
+                        let f_id = from_id.clone();
+                        let t_id = target_device_id.clone();
+                        let authorized = state
+                            .db_call(move |db| db.is_authorized_to_message(&f_id, &t_id))
+                            .await
+                            .unwrap_or(false);
+
+                        if authorized {
+                            route_message(
+                                &state,
+                                &target_device_id,
+                                SignalingMessage::Candidate {
+                                    target_device_id: target_device_id.clone(),
+                                    candidate,
+                                    from_device_id: Some(from_id.clone()),
+                                },
+                            )
+                            .await;
+                        }
                     }
                 }
                 _ => {}
@@ -209,9 +253,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     send_task.abort();
 }
 
-pub async fn route_message(state: &Arc<AppState>, target_id: String, msg: SignalingMessage) {
-    if let Some(tx) = state.peers.get(&target_id) {
-        let _ = tx.send(msg);
+pub async fn route_message(state: &Arc<AppState>, target_id: &str, msg: SignalingMessage) {
+    let tx = state.peers.get(target_id).map(|r| r.value().clone());
+
+    if let Some(tx) = tx {
+        let _ = tx.send(msg).await;
     } else {
         tracing::warn!(
             "Target device {} not found for signaling, enqueuing to mailbox",
@@ -221,11 +267,10 @@ pub async fn route_message(state: &Arc<AppState>, target_id: String, msg: Signal
         let payload = serde_json::to_vec(&msg).unwrap_or_default();
         if !payload.is_empty() {
             let state_clone = Arc::clone(state);
-            let t_id = target_id.clone();
-            let _ = tokio::task::spawn_blocking(move || {
-                state_clone.db.enqueue_mailbox_message(&t_id, &payload)
-            })
-            .await;
+            let t_id = target_id.to_string();
+            let _ = state_clone
+                .db_call(move |db| db.enqueue_mailbox_message(&t_id, &payload))
+                .await;
         }
     }
 }

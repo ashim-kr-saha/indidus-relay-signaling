@@ -28,6 +28,11 @@ pub async fn upload_share(
     uri: Uri,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
+    // Enforce 10MB limit
+    if body.len() > 10 * 1024 * 1024 {
+        return Err(Error::BadRequest("Share too large (max 10MB)".to_string()));
+    }
+
     let identity_id =
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body)
             .await?;
@@ -49,8 +54,7 @@ pub async fn upload_share(
     let id_clone = identity_id.clone();
     let id = state
         .db_call(move |db| db.create_share(&body, Some(&id_clone), expires_at, max_views))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok((StatusCode::CREATED, axum::Json(UploadResponse { id })))
 }
@@ -62,15 +66,15 @@ pub async fn download_share(
     let s_id = id.clone();
     let share = state
         .db_call(move |db| db.get_share(&s_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if share.expires_at.is_some_and(|exp| Utc::now() > exp) {
         let s_id = id.clone();
-        state
+        let _ = state
             .db_call(move |db| {
-                db.delete_share(&s_id).ok();
+                db.delete_share(&s_id)?;
+                Ok(())
             })
             .await;
         return Err(Error::NotFound);
@@ -78,19 +82,19 @@ pub async fn download_share(
 
     if share.max_views.is_some_and(|max| share.view_count >= max) {
         let s_id = id.clone();
-        state
+        let _ = state
             .db_call(move |db| {
-                db.delete_share(&s_id).ok();
+                db.delete_share(&s_id)?;
+                Ok(())
             })
             .await;
         return Err(Error::NotFound);
     }
 
     let s_id = id.clone();
-    state
+    let _ = state
         .db_call(move |db| db.increment_share_view_count(&s_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await;
 
     Ok(share.payload)
 }
@@ -102,8 +106,7 @@ pub async fn acknowledge_share(
     let s_id = id.clone();
     state
         .db_call(move |db| db.delete_share(&s_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::OK)
 }
@@ -115,17 +118,24 @@ pub async fn revoke_share(
     uri: Uri,
     Path(id): Path<String>,
 ) -> Result<impl IntoResponse> {
-    let _identity_id =
+    let identity_id =
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
             .await?;
 
-    // TODO: Verify identity_id owns the share
+    let s_id = id.clone();
+    let share = state
+        .db_call(move |db| db.get_share(&s_id))
+        .await?
+        .ok_or_else(|| Error::NotFound)?;
+
+    if share.owner_identity_id.is_none() || share.owner_identity_id.unwrap() != identity_id {
+        return Err(Error::Auth("Not authorized to revoke this share".to_string()));
+    }
 
     let s_id = id.clone();
     state
         .db_call(move |db| db.delete_share(&s_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

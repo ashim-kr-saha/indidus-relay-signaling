@@ -43,8 +43,7 @@ pub async fn register_device(
     let name = payload.name.clone();
     let device_id = state
         .db_call(move |db| db.create_device(&id, &pk_bytes, name.as_deref()))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok((
         StatusCode::CREATED,
@@ -65,8 +64,7 @@ pub async fn list_devices(
     let id = identity_id.clone();
     let devices = state
         .db_call(move |db| db.get_devices_by_identity(&id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(Json(devices))
 }
@@ -86,8 +84,7 @@ pub async fn revoke_device(
     let id = identity_id.clone();
     state
         .db_call(move |db| db.delete_device(&d_id, &id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

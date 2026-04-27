@@ -2,6 +2,7 @@ use crate::models::user::{AuditLogEntry, DeviceResponse};
 use chrono::{DateTime, Utc};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use mini_moka::sync::Cache;
 use std::path::Path;
 use tracing::info;
@@ -11,6 +12,7 @@ pub type DbPool = Pool<SqliteConnectionManager>;
 #[derive(Clone)]
 pub struct ShareData {
     pub payload: Vec<u8>,
+    pub owner_identity_id: Option<String>,
     pub expires_at: Option<DateTime<Utc>>,
     pub max_views: Option<i32>,
     pub view_count: i32,
@@ -51,7 +53,9 @@ impl Db {
             PRAGMA journal_mode = WAL;
             PRAGMA synchronous = NORMAL;
             PRAGMA temp_store = MEMORY;
-            PRAGMA cache_size = -2000; -- 2MB
+            PRAGMA cache_size = -64000; -- 64MB
+            PRAGMA mmap_size = 268435456; -- 256MB
+            PRAGMA threads = 4;
         ",
         )?;
 
@@ -131,6 +135,11 @@ impl Db {
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(identity_id) REFERENCES identities(id)
             );
+
+            CREATE INDEX IF NOT EXISTS idx_mailbox_target ON mailbox(target_device_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_identity ON audit_logs(identity_id);
+            CREATE INDEX IF NOT EXISTS idx_vault_members_vault ON vault_members(vault_id);
+            CREATE INDEX IF NOT EXISTS idx_devices_identity ON devices(identity_id);
         ",
         )?;
 
@@ -140,19 +149,29 @@ impl Db {
 
     // --- Identity Operations ---
 
-    pub fn create_identity(
+    pub fn create_identity_with_primary_device(
         &self,
         username: &str,
         root_public_key: &[u8],
     ) -> anyhow::Result<String> {
-        let conn = self.pool.get()?;
-        let id = uuid::Uuid::new_v4().to_string();
-        conn.execute(
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction()?;
+
+        let identity_id = uuid::Uuid::new_v4().to_string();
+        tx.execute(
             "INSERT INTO identities (id, username, root_public_key) VALUES (?1, ?2, ?3)",
-            (&id, username, root_public_key),
+            (&identity_id, username, root_public_key),
         )?;
+
+        let device_id = uuid::Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO devices (id, identity_id, public_key, name) VALUES (?1, ?2, ?3, 'Primary Device')",
+            (&device_id, &identity_id, root_public_key),
+        )?;
+
+        tx.commit()?;
         self.identity_cache.invalidate(&root_public_key.to_vec());
-        Ok(id)
+        Ok(identity_id)
     }
 
     pub fn get_identity_by_username(
@@ -377,6 +396,53 @@ impl Db {
         Ok(())
     }
 
+    pub fn is_authorized_to_message(
+        &self,
+        from_device_id: &str,
+        target_device_id: &str,
+    ) -> anyhow::Result<bool> {
+        let conn = self.pool.get()?;
+        
+        // 1. Get identity IDs for both devices
+        let from_identity: String = conn.query_row(
+            "SELECT identity_id FROM devices WHERE id = ?1",
+            [from_device_id],
+            |row| row.get(0),
+        ).map_err(|e| {
+            tracing::error!("Auth check failed: source device {} not found: {}", from_device_id, e);
+            anyhow::anyhow!("Source device not found")
+        })?;
+
+        let target_identity: String = conn.query_row(
+            "SELECT identity_id FROM devices WHERE id = ?1",
+            [target_device_id],
+            |row| row.get(0),
+        ).map_err(|e| {
+            tracing::warn!("Auth check: target device {} not found: {}", target_device_id, e);
+            anyhow::anyhow!("Target device not found")
+        })?;
+
+        // 2. If same identity, allowed (multi-device)
+        if from_identity == target_identity {
+            return Ok(true);
+        }
+
+        // 3. Check if confirmed friends
+        let (u1, u2) = if from_identity < target_identity {
+            (&from_identity, &target_identity)
+        } else {
+            (&target_identity, &from_identity)
+        };
+
+        let status: Option<String> = conn.query_row(
+            "SELECT status FROM friends WHERE identity_id_1 = ?1 AND identity_id_2 = ?2",
+            [u1, u2],
+            |row| row.get(0),
+        ).optional()?;
+
+        Ok(status.is_some_and(|s| s == "confirmed"))
+    }
+
     pub fn block_friend(&self, identity_id: &str, blocked_identity_id: &str) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
         let (u1, u2) = if identity_id < blocked_identity_id {
@@ -395,6 +461,21 @@ impl Db {
 
     pub fn enqueue_mailbox_message(&self, device_id: &str, payload: &[u8]) -> anyhow::Result<()> {
         let conn = self.pool.get()?;
+        
+        // Check mailbox quota (max 100 messages or 10MB total per device)
+        let (count, total_size): (i64, i64) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(LENGTH(payload)), 0) FROM mailbox WHERE target_device_id = ?1",
+            [device_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+
+        if count >= 100 {
+            return Err(anyhow::anyhow!("Mailbox message count quota exceeded (max 100)"));
+        }
+        if total_size + (payload.len() as i64) > 10 * 1024 * 1024 {
+            return Err(anyhow::anyhow!("Mailbox size quota exceeded (max 10MB)"));
+        }
+
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO mailbox (id, target_device_id, payload) VALUES (?1, ?2, ?3)",
@@ -403,34 +484,39 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_mailbox_messages(
+    pub fn get_and_clear_mailbox(
         &self,
         device_id: &str,
     ) -> anyhow::Result<Vec<crate::mailbox::MailboxMessage>> {
-        let conn = self.pool.get()?;
-        let mut stmt = conn.prepare("SELECT id, payload, created_at FROM mailbox WHERE target_device_id = ?1 ORDER BY created_at ASC")?;
-        let rows = stmt.query_map([device_id], |row| {
-            Ok(crate::mailbox::MailboxMessage {
-                id: row.get(0)?,
-                payload: row.get(1)?,
-                created_at: row.get(2)?,
-            })
-        })?;
+        let mut conn = self.pool.get()?;
+        let tx = conn.transaction()?;
 
-        let mut messages = Vec::new();
-        for msg in rows {
-            messages.push(msg?);
+        let messages = {
+            let mut stmt = tx.prepare("SELECT id, payload, created_at FROM mailbox WHERE target_device_id = ?1 ORDER BY created_at ASC")?;
+            let rows = stmt.query_map([device_id], |row| {
+                Ok(crate::mailbox::MailboxMessage {
+                    id: row.get(0)?,
+                    payload: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })?;
+
+            let mut msgs = Vec::new();
+            for msg in rows {
+                msgs.push(msg?);
+            }
+            msgs
+        };
+
+        if !messages.is_empty() {
+            tx.execute(
+                "DELETE FROM mailbox WHERE target_device_id = ?1",
+                [device_id],
+            )?;
         }
-        Ok(messages)
-    }
 
-    pub fn clear_mailbox(&self, device_id: &str) -> anyhow::Result<()> {
-        let conn = self.pool.get()?;
-        conn.execute(
-            "DELETE FROM mailbox WHERE target_device_id = ?1",
-            [device_id],
-        )?;
-        Ok(())
+        tx.commit()?;
+        Ok(messages)
     }
 
     // --- Vault Operations ---
@@ -611,7 +697,7 @@ impl Db {
     pub fn get_share(&self, id: &str) -> anyhow::Result<Option<ShareData>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT payload, expires_at, max_views, view_count FROM shares WHERE id = ?1",
+            "SELECT payload, expires_at, max_views, view_count, owner_identity_id FROM shares WHERE id = ?1",
         )?;
         let mut rows = stmt.query([id])?;
         if let Some(row) = rows.next()? {
@@ -622,8 +708,10 @@ impl Db {
                 .map(|e| e.with_timezone(&chrono::Utc));
             let max_views: Option<i32> = row.get(2)?;
             let view_count: i32 = row.get(3)?;
+            let owner_identity_id: Option<String> = row.get(4)?;
             Ok(Some(ShareData {
                 payload,
+                owner_identity_id,
                 expires_at,
                 max_views,
                 view_count,

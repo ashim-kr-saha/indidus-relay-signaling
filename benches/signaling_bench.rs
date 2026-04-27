@@ -19,7 +19,7 @@ fn bench_signaling_routing(c: &mut Criterion) {
     let mut peer_ids = Vec::new();
     for i in 0..1000 {
         let device_id = format!("device_{}", i);
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(100);
         state.peers.insert(device_id.clone(), tx);
         peer_ids.push(device_id);
     }
@@ -33,7 +33,7 @@ fn bench_signaling_routing(c: &mut Criterion) {
 
     c.bench_function("route_message_1000_peers", |b| {
         b.iter(|| {
-            rt.block_on(async { route_message(&state, target_id.clone(), msg.clone()).await })
+            rt.block_on(async { route_message(&state, &target_id, msg.clone()).await })
         })
     });
 }

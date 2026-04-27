@@ -53,8 +53,7 @@ pub async fn invite_to_vault(
     let role = payload.role.clone();
     let invite_id = state
         .db_call(move |db| db.create_vault_invite(&v_id, &i_id, &i_user, &role))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(Json(invite_id))
 }
@@ -72,8 +71,7 @@ pub async fn list_vault_invites(
     let id = identity_id.clone();
     let invites = state
         .db_call(move |db| db.get_pending_vault_invites(&id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(Json(invites))
 }
@@ -93,8 +91,7 @@ pub async fn accept_vault_invite(
     let id = identity_id.clone();
     state
         .db_call(move |db| db.respond_to_vault_invite(&inv_id, &id, "accepted"))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(Json(()))
 }
@@ -113,8 +110,7 @@ pub async fn list_vault_members(
     let v_id = vault_id.clone();
     let members = state
         .db_call(move |db| db.get_vault_members(&v_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(Json(members))
 }

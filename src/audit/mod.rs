@@ -1,4 +1,4 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Result, server::AppState};
 use axum::{
     Json,
     extract::State,
@@ -20,8 +20,7 @@ pub async fn get_audit_logs(
     let id = identity_id.clone();
     let logs = state
         .db_call(move |db| db.get_audit_logs(&id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(Json(logs))
 }

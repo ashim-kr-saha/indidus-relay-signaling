@@ -36,21 +36,12 @@ pub async fn register_identity(
         return Err(Error::BadRequest("Public key must be 32 bytes".to_string()));
     }
 
-    // 3. Create Identity
+    // 3. Create Identity and Primary Device atomically
     let username = payload.username.clone();
-    let pk1 = public_key_bytes.clone();
-    let pk2 = public_key_bytes.clone();
-    let identity_id = state
-        .db_call(move |db| db.create_identity(&username, &pk1))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
-
-    // 4. Register the root key as the first device
-    let id = identity_id.clone();
-    state
-        .db_call(move |db| db.create_device(&id, &pk2, Some("Primary Device")))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+    let pk = public_key_bytes.clone();
+    let _identity_id = state
+        .db_call(move |db| db.create_identity_with_primary_device(&username, &pk))
+        .await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -92,12 +83,20 @@ pub fn validate_request_signature(
             .map_err(|_| Error::Auth("Invalid signature length".to_string()))?,
     );
 
-    // 3. Reconstruct signed data
+    // 3. Reconstruct signed data (METHOD|PATH|TIMESTAMP|BODY_HASH)
     let mut hasher = Sha256::new();
     hasher.update(body);
-    let body_hash = hex::encode(hasher.finalize());
+    let body_hash_bytes = hasher.finalize();
+    let body_hash_hex = hex::encode(body_hash_bytes);
 
-    let signed_data = format!("{}|{}|{}|{}", method, path, timestamp, body_hash);
+    let mut signed_data = String::with_capacity(method.len() + path.len() + timestamp.len() + body_hash_hex.len() + 4);
+    signed_data.push_str(method);
+    signed_data.push('|');
+    signed_data.push_str(path);
+    signed_data.push('|');
+    signed_data.push_str(timestamp);
+    signed_data.push('|');
+    signed_data.push_str(&body_hash_hex);
 
     // 4. Verify
     public_key
@@ -147,8 +146,7 @@ pub async fn authenticate_identity(
     let pk = device_pk_bytes.clone();
     let info = state
         .db_call(move |db| db.get_identity_by_public_key(&pk))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| Error::Auth("Device not recognized".to_string()))?;
 
     if info.username != identity_id {
@@ -164,20 +162,54 @@ fn verify_pow(username: &str, nonce: u64, difficulty: u32) -> Result<()> {
     hasher.update(nonce.to_be_bytes());
     let result = hasher.finalize();
 
-    let mut leading_zeros = 0;
-    for byte in result {
-        let zeros = byte.leading_zeros();
-        leading_zeros += zeros;
-        if zeros < 8 {
-            break;
-        }
-    }
-
-    if leading_zeros < difficulty {
+    if !check_difficulty_fast(&result, difficulty) {
         return Err(Error::BadRequest("Insufficient Proof-of-Work".to_string()));
     }
 
     Ok(())
+}
+
+#[inline(always)]
+fn check_difficulty_fast(hash: &[u8], difficulty: u32) -> bool {
+    let first_64 = u64::from_be_bytes(hash[0..8].try_into().unwrap());
+    
+    if difficulty <= 64 {
+        return first_64.leading_zeros() >= difficulty;
+    }
+    
+    if first_64 != 0 { return false; }
+    
+    let full_bytes = (difficulty / 8) as usize;
+    let remaining_bits = difficulty % 8;
+
+    for &byte in &hash[8..full_bytes] {
+        if byte != 0 {
+            return false;
+        }
+    }
+
+    if remaining_bits > 0 && (hash[full_bytes] >> (8 - remaining_bits)) != 0 {
+        return false;
+    }
+
+    true
+}
+
+pub fn verify_signature(message: &str, public_key_bytes: &[u8], signature_bytes: &[u8]) -> bool {
+    let public_key = match VerifyingKey::from_bytes(
+        public_key_bytes
+            .try_into()
+            .unwrap_or(&[0u8; 32]),
+    ) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
+    let signature = Signature::from_bytes(
+        signature_bytes
+            .try_into()
+            .unwrap_or(&[0u8; 64]),
+    );
+    public_key.verify(message.as_bytes(), &signature).is_ok()
 }
 
 #[cfg(test)]

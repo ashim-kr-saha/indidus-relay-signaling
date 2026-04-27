@@ -1,4 +1,4 @@
-use crate::{Config, db::Db, signaling::SignalingMessage, viewer};
+use crate::{Config, Error, Result, db::Db, signaling::SignalingMessage, viewer};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
@@ -17,8 +17,8 @@ use tower_http::trace::TraceLayer;
 pub struct AppState {
     pub config: Config,
     pub db: Db,
-    pub peers: DashMap<String, mpsc::UnboundedSender<SignalingMessage>>,
-    pub pairing_sessions: DashMap<String, (Vec<u8>, Option<Vec<u8>>)>,
+    pub peers: DashMap<String, mpsc::Sender<SignalingMessage>>,
+    pub pairing_sessions: mini_moka::sync::Cache<String, (Vec<u8>, Option<Vec<u8>>)>,
     pub prometheus_handle: PrometheusHandle,
 }
 
@@ -30,24 +30,30 @@ impl AppState {
             Err(_) => PrometheusBuilder::new().build_recorder().handle(),
         };
 
+        let pairing_sessions = mini_moka::sync::Cache::builder()
+            .max_capacity(1000)
+            .time_to_live(std::time::Duration::from_secs(300)) // 5 minute TTL
+            .build();
+
         Ok(Self {
             config,
             db,
             peers: DashMap::new(),
-            pairing_sessions: DashMap::new(),
+            pairing_sessions,
             prometheus_handle,
         })
     }
 
-    pub async fn db_call<F, R>(&self, f: F) -> R
+    pub async fn db_call<F, R>(&self, f: F) -> Result<R>
     where
-        F: FnOnce(&Db) -> R + Send + 'static,
+        F: FnOnce(&Db) -> anyhow::Result<R> + Send + 'static,
         R: Send + 'static,
     {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || f(&db))
             .await
-            .expect("DB task panicked")
+            .map_err(|e| Error::Internal(format!("DB task error: {}", e)))?
+            .map_err(|e| Error::Internal(e.to_string()))
     }
 }
 
@@ -71,12 +77,25 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         )
         .route(
             "/devices",
-            post(crate::devices::register_device).get(crate::devices::list_devices),
+            post(crate::devices::register_device)
+                .get(crate::devices::list_devices)
+                .layer(GovernorLayer {
+                    config: governor_config.clone(),
+                }),
         )
-        .route("/devices/:id", post(crate::devices::revoke_device))
+        .route(
+            "/devices/:id",
+            post(crate::devices::revoke_device).layer(GovernorLayer {
+                config: governor_config.clone(),
+            }),
+        )
         .route(
             "/friends",
-            post(crate::friends::send_friend_request).get(crate::friends::list_friends),
+            post(crate::friends::send_friend_request)
+                .get(crate::friends::list_friends)
+                .layer(GovernorLayer {
+                    config: governor_config.clone(),
+                }),
         )
         .route(
             "/friends/accept/:username",
@@ -86,7 +105,12 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/turn", get(crate::turn::get_turn_credentials))
         .route("/audit", get(crate::audit::get_audit_logs))
         .route("/push/:device_id", get(crate::push::push_stream))
-        .route("/vaults/invite", post(crate::vaults::invite_to_vault))
+        .route(
+            "/vaults/invite",
+            post(crate::vaults::invite_to_vault).layer(GovernorLayer {
+                config: governor_config.clone(),
+            }),
+        )
         .route("/vaults/invites", get(crate::vaults::list_vault_invites))
         .route(
             "/vaults/invites/:id/accept",
@@ -96,7 +120,7 @@ pub fn create_app(state: Arc<AppState>) -> Router {
             "/vaults/:id/members",
             get(crate::vaults::list_vault_members),
         )
-        .route("/ws", get(crate::signaling::ws_handler))
+        .route("/ws", get(crate::signaling::signaling_handler))
         .route("/mailbox", post(crate::mailbox::enqueue_message))
         .route("/mailbox/:device_id", get(crate::mailbox::get_mailbox))
         .route(
@@ -126,6 +150,7 @@ pub fn create_app(state: Arc<AppState>) -> Router {
         .route("/pkg/*path", get(viewer::static_handler))
         .route("/metrics", get(metrics_handler))
         .layer(TraceLayer::new_for_http())
+        .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB global limit
         .with_state(state)
 }
 

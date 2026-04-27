@@ -28,6 +28,9 @@ pub async fn enqueue_message(
     uri: Uri,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
+    if body.len() > 1024 * 1024 {
+        return Err(Error::BadRequest("Mailbox message too large (max 1MB)".to_string()));
+    }
     let _identity_id =
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body)
             .await?;
@@ -39,8 +42,7 @@ pub async fn enqueue_message(
     let data = payload.payload.clone();
     state
         .db_call(move |db| db.enqueue_mailbox_message(&t_id, &data))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -60,16 +62,8 @@ pub async fn get_mailbox(
 
     let d_id = device_id.clone();
     let messages = state
-        .db_call(move |db| db.get_mailbox_messages(&d_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
-
-    // Atomically clear mailbox after retrieval
-    let d_id2 = device_id.clone();
-    state
-        .db_call(move |db| db.clear_mailbox(&d_id2))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .db_call(move |db| db.get_and_clear_mailbox(&d_id))
+        .await?;
 
     Ok(axum::Json(messages))
 }

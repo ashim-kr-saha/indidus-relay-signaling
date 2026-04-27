@@ -37,8 +37,7 @@ pub async fn send_friend_request(
     let friend_username = payload.friend_username.clone();
     let friend_identity_id = state
         .db_call(move |db| db.get_identity_id_by_username(&friend_username))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     if identity_id == friend_identity_id {
@@ -51,8 +50,7 @@ pub async fn send_friend_request(
     let f_id = friend_identity_id.clone();
     state
         .db_call(move |db| db.create_friend_request(&id, &f_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::CREATED)
 }
@@ -70,8 +68,7 @@ pub async fn list_friends(
     let id = identity_id.clone();
     let friends = state
         .db_call(move |db| db.get_friends(&id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(axum::Json(friends))
 }
@@ -87,19 +84,15 @@ pub async fn accept_friend_request(
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
             .await?;
 
-    let f_name = friend_username.clone();
-    let friend_identity_id = state
-        .db_call(move |db| db.get_identity_id_by_username(&f_name))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?
+    let f_id = state
+        .db_call(move |db| db.get_identity_id_by_username(&friend_username))
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
-    let f_id = friend_identity_id.clone();
     let id = identity_id.clone();
     state
         .db_call(move |db| db.confirm_friendship(&f_id, &id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::OK)
 }
@@ -115,19 +108,15 @@ pub async fn remove_friend(
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
             .await?;
 
-    let f_name = friend_username.clone();
-    let friend_identity_id = state
-        .db_call(move |db| db.get_identity_id_by_username(&f_name))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?
+    let f_id = state
+        .db_call(move |db| db.get_identity_id_by_username(&friend_username))
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     let id = identity_id.clone();
-    let f_id = friend_identity_id.clone();
     state
         .db_call(move |db| db.delete_friend(&id, &f_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -143,18 +132,15 @@ pub async fn block_friend(
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
             .await?;
 
-    let friend_identity_id = state
-        .db
-        .get_identity_id_by_username(&friend_username)
-        .map_err(|e| Error::Internal(e.to_string()))?
+    let f_id = state
+        .db_call(move |db| db.get_identity_id_by_username(&friend_username))
+        .await?
         .ok_or_else(|| Error::NotFound)?;
 
     let id = identity_id.clone();
-    let f_id = friend_identity_id.clone();
     state
         .db_call(move |db| db.block_friend(&id, &f_id))
-        .await
-        .map_err(|e| Error::Internal(e.to_string()))?;
+        .await?;
 
     Ok(StatusCode::OK)
 }
