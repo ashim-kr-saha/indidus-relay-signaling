@@ -2,8 +2,9 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use reqwest::{Client, StatusCode};
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
+use indidus_proto::signaling::RegisterIdentityRequest;
+use prost::Message;
 
 #[tokio::test]
 async fn test_registration_and_device_management() {
@@ -21,13 +22,18 @@ async fn test_registration_and_device_management() {
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
 
     // 3. Register
+    let req = RegisterIdentityRequest {
+        username: username.to_string(),
+        root_public_key: public_key_hex.clone(),
+        pow_nonce,
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
     let resp = client
         .post(server.url("/register"))
-        .json(&json!({
-            "username": username,
-            "root_public_key": public_key_hex,
-            "pow_nonce": pow_nonce
-        }))
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
         .send()
         .await
         .unwrap();
@@ -35,7 +41,6 @@ async fn test_registration_and_device_management() {
     assert_eq!(resp.status(), StatusCode::CREATED);
 
     // 4. Test authenticated request (Get Device)
-    // In v4.0, /devices returns list of devices for identity
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -64,13 +69,18 @@ async fn test_bad_pow_rejection() {
     let signing_key = SigningKey::generate(&mut rng);
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
+    let req = RegisterIdentityRequest {
+        username: "bot".to_string(),
+        root_public_key: public_key_hex,
+        pow_nonce: 0, // Wrong nonce
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
     let resp = client
         .post(server.url("/register"))
-        .json(&json!({
-            "username": "bot",
-            "root_public_key": public_key_hex,
-            "pow_nonce": 0 // Wrong nonce
-        }))
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
         .send()
         .await
         .unwrap();

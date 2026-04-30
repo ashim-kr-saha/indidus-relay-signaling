@@ -7,6 +7,9 @@ use axum::{
 use futures::stream::{self, Stream};
 use std::sync::Arc;
 use std::{convert::Infallible, time::Duration};
+use indidus_proto::signaling::{MailboxResponse, MailboxEntry};
+use prost::Message;
+use base64::prelude::*;
 
 pub async fn push_stream(
     State(state): State<Arc<AppState>>,
@@ -25,8 +28,19 @@ pub async fn push_stream(
             if let Ok(messages) = state.db.get_and_clear_mailbox(&device_id)
                 && !messages.is_empty()
             {
+                let entries = messages.into_iter().map(|m| MailboxEntry {
+                    id: m.id,
+                    payload: m.payload,
+                    created_at: m.created_at,
+                }).collect();
+
+                let response = MailboxResponse { messages: entries };
+                let mut buf = Vec::new();
+                response.encode(&mut buf).unwrap();
+                let b64 = BASE64_STANDARD.encode(buf);
+
                 let event = Event::default()
-                    .data(serde_json::to_string(&messages).unwrap_or_default())
+                    .data(b64)
                     .event("mailbox_update");
 
                 return Some((Ok(event), (state, device_id)));

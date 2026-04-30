@@ -2,8 +2,10 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use reqwest::Client;
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
+use indidus_proto::signaling::RegisterIdentityRequest;
+use indidus_proto::relay::UploadResponse;
+use prost::Message;
 
 #[tokio::test]
 async fn test_full_lifecycle_v4() {
@@ -19,13 +21,19 @@ async fn test_full_lifecycle_v4() {
 
     // 2. Register
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
+    
+    let req = RegisterIdentityRequest {
+        username: username.to_string(),
+        root_public_key: public_key_hex.clone(),
+        pow_nonce,
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
     let res = client
         .post(server.url("/register"))
-        .json(&json!({
-            "username": username,
-            "root_public_key": &public_key_hex,
-            "pow_nonce": pow_nonce
-        }))
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
         .send()
         .await
         .unwrap();
@@ -52,8 +60,9 @@ async fn test_full_lifecycle_v4() {
         .unwrap();
 
     assert_eq!(res.status(), 201);
-    let upload_res: serde_json::Value = res.json().await.unwrap();
-    let share_id = upload_res["id"].as_str().unwrap().to_string();
+    let bytes = res.bytes().await.unwrap();
+    let upload_res = UploadResponse::decode(bytes).unwrap();
+    let share_id = upload_res.id;
 
     // 4. Download
     let res = client

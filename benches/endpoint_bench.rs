@@ -4,12 +4,13 @@ use tokio::runtime::Runtime;
 use tokio::net::TcpListener;
 use tempfile::NamedTempFile;
 use reqwest::Client;
-use serde_json::json;
 use ed25519_dalek::{SigningKey, Signer};
 use std::time::{SystemTime, UNIX_EPOCH};
 use sha2::{Digest, Sha256};
 use rand::{Rng, thread_rng};
 use std::sync::Arc;
+use indidus_proto::signaling::RegisterIdentityRequest;
+use prost::Message;
 
 pub struct TestServer {
     pub url: String,
@@ -94,33 +95,45 @@ fn bench_signaling_endpoints(c: &mut Criterion) {
             let pk_hex = hex::encode(signing_key.verifying_key().as_bytes());
             
             let pow_nonce = solve_pow(&username, server.config.auth.registration_difficulty);
+            
+            let req = RegisterIdentityRequest {
+                username: username.clone(),
+                root_public_key: pk_hex,
+                pow_nonce: pow_nonce,
+            };
+            let mut buf = Vec::new();
+            req.encode(&mut buf).unwrap();
+
             let resp = client.post(format!("{}/register", server.url))
-                .json(&json!({
-                    "username": username,
-                    "root_public_key": pk_hex,
-                    "pow_nonce": pow_nonce
-                }))
+                .header("Content-Type", "application/x-protobuf")
+                .body(buf)
                 .send()
                 .await
                 .unwrap();
-            let status = resp.status();
-            if status != 201 {
-                panic!("Register failed: {} - {:?}", status, resp.text().await);
-            }
+            assert_eq!(resp.status(), 201);
             black_box(resp);
         });
     });
 
     // 2. /devices (list)
-    // Setup a user for authenticated endpoints
     let (fixed_username, fixed_signing_key) = server.runtime.block_on(async {
         let username = "fixed_user";
         let mut rng = rand::thread_rng();
         let sk = SigningKey::generate(&mut rng);
         let pk_hex = hex::encode(sk.verifying_key().as_bytes());
         let pow = solve_pow(username, server.config.auth.registration_difficulty);
+        
+        let req = RegisterIdentityRequest {
+            username: username.to_string(),
+            root_public_key: pk_hex,
+            pow_nonce: pow,
+        };
+        let mut buf = Vec::new();
+        req.encode(&mut buf).unwrap();
+
         client.post(format!("{}/register", server.url))
-            .json(&json!({ "username": username, "root_public_key": pk_hex, "pow_nonce": pow }))
+            .header("Content-Type", "application/x-protobuf")
+            .body(buf)
             .send().await.unwrap();
         (username.to_string(), sk)
     });

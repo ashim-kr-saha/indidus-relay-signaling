@@ -1,24 +1,13 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Error, Result, server::AppState, proto::Protobuf};
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct FriendRequest {
-    pub friend_username: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct FriendResponse {
-    pub username: String,
-    pub status: String,
-    pub last_active: Option<String>,
-}
+use indidus_proto::signaling::{FriendRequest, FriendsList, FriendResponse};
+use prost::Message;
 
 pub async fn send_friend_request(
     State(state): State<Arc<AppState>>,
@@ -31,10 +20,9 @@ pub async fn send_friend_request(
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body)
             .await?;
 
-    let payload: FriendRequest =
-        serde_json::from_slice(&body).map_err(|e| Error::BadRequest(e.to_string()))?;
+    let payload = FriendRequest::decode(body).map_err(|e| Error::BadRequest(e.to_string()))?;
 
-    let friend_username = payload.friend_username.clone();
+    let friend_username = payload.target_username.clone();
     let friend_identity_id = state
         .db_call(move |db| db.get_identity_id_by_username(&friend_username))
         .await?
@@ -68,7 +56,13 @@ pub async fn list_friends(
     let id = identity_id.clone();
     let friends = state.db_call(move |db| db.get_friends(&id)).await?;
 
-    Ok(axum::Json(friends))
+    let entries = friends.into_iter().map(|f| FriendResponse {
+        username: f.username,
+        status: f.status,
+        last_active: f.last_active,
+    }).collect();
+
+    Ok(Protobuf(FriendsList { friends: entries }))
 }
 
 pub async fn accept_friend_request(

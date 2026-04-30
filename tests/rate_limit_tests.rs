@@ -1,7 +1,8 @@
 mod common;
 use common::{TestServer, solve_pow};
 use reqwest::{Client, StatusCode};
-use serde_json::json;
+use indidus_proto::signaling::RegisterIdentityRequest;
+use prost::Message;
 
 #[tokio::test]
 async fn test_registration_rate_limiting() {
@@ -21,13 +22,18 @@ async fn test_registration_rate_limiting() {
         let unique_username = format!("{}_{}", username, i);
         let pow_nonce = solve_pow(&unique_username, server.config.auth.registration_difficulty);
 
+        let req = RegisterIdentityRequest {
+            username: unique_username,
+            root_public_key: public_key_hex.clone(),
+            pow_nonce,
+        };
+        let mut buf = Vec::new();
+        req.encode(&mut buf).unwrap();
+
         let resp = client
             .post(server.url("/register"))
-            .json(&json!({
-                "username": unique_username,
-                "root_public_key": public_key_hex,
-                "pow_nonce": pow_nonce
-            }))
+            .header("Content-Type", "application/x-protobuf")
+            .body(buf)
             .send()
             .await
             .unwrap();

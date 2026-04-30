@@ -1,25 +1,13 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Error, Result, server::AppState, proto::Protobuf};
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct EnqueueRequest {
-    pub target_device_id: String,
-    pub payload: Vec<u8>, // encrypted
-}
-
-#[derive(Debug, Serialize)]
-pub struct MailboxMessage {
-    pub id: String,
-    pub payload: Vec<u8>,
-    pub created_at: String,
-}
+use indidus_proto::signaling::{MailboxEnqueueRequest, MailboxResponse, MailboxEntry};
+use prost::Message;
 
 pub async fn enqueue_message(
     State(state): State<Arc<AppState>>,
@@ -37,8 +25,7 @@ pub async fn enqueue_message(
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body)
             .await?;
 
-    let payload: EnqueueRequest =
-        serde_json::from_slice(&body).map_err(|e| Error::BadRequest(e.to_string()))?;
+    let payload = MailboxEnqueueRequest::decode(body).map_err(|e| Error::BadRequest(e.to_string()))?;
 
     let t_id = payload.target_device_id.clone();
     let data = payload.payload.clone();
@@ -67,5 +54,12 @@ pub async fn get_mailbox(
         .db_call(move |db| db.get_and_clear_mailbox(&d_id))
         .await?;
 
-    Ok(axum::Json(messages))
+    let entries = messages.into_iter().map(|m| MailboxEntry {
+        id: m.id,
+        payload: m.payload,
+        created_at: m.created_at,
+    }).collect();
+
+    let response = MailboxResponse { messages: entries };
+    Ok(Protobuf(response))
 }

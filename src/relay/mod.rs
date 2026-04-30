@@ -1,4 +1,4 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Error, Result, server::AppState, proto::Protobuf};
 use axum::{
     body::Bytes,
     extract::{Path, State},
@@ -6,20 +6,7 @@ use axum::{
     response::IntoResponse,
 };
 use chrono::{Duration, Utc};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct UploadRequest {
-    pub payload: Vec<u8>,
-    pub ttl_seconds: Option<u64>,
-    pub max_views: Option<i32>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct UploadResponse {
-    pub id: String,
-}
 
 pub async fn upload_share(
     State(state): State<Arc<AppState>>,
@@ -56,7 +43,8 @@ pub async fn upload_share(
         .db_call(move |db| db.create_share(&body, Some(&id_clone), expires_at, max_views))
         .await?;
 
-    Ok((StatusCode::CREATED, axum::Json(UploadResponse { id })))
+    let response = indidus_proto::relay::UploadResponse { id };
+    Ok((StatusCode::CREATED, Protobuf(response)))
 }
 
 pub async fn download_share(

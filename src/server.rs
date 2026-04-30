@@ -1,4 +1,4 @@
-use crate::{Config, Error, Result, db::Db, signaling::SignalingMessage, viewer};
+use crate::{Config, Error, Result, db::Db, viewer};
 use dashmap::DashMap;
 use tokio::sync::mpsc;
 
@@ -17,7 +17,7 @@ use tower_http::trace::TraceLayer;
 pub struct AppState {
     pub config: Config,
     pub db: Db,
-    pub peers: DashMap<String, mpsc::Sender<SignalingMessage>>,
+    pub peers: DashMap<String, mpsc::Sender<indidus_proto::signaling::SignalingMessage>>,
     pub pairing_sessions: mini_moka::sync::Cache<String, (Vec<u8>, Option<Vec<u8>>)>,
     pub prometheus_handle: PrometheusHandle,
 }

@@ -2,8 +2,10 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use reqwest::{Client, StatusCode};
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
+use indidus_proto::signaling::{RegisterIdentityRequest, ErrorResponse};
+use indidus_proto::relay::UploadResponse;
+use prost::Message;
 
 #[tokio::test]
 async fn test_invalid_pow_rejection() {
@@ -17,20 +19,26 @@ async fn test_invalid_pow_rejection() {
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
     // Send a wrong nonce (0 is unlikely to work for difficulty 2)
+    let req = RegisterIdentityRequest {
+        username: username.to_string(),
+        root_public_key: public_key_hex,
+        pow_nonce: 0,
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
     let resp = client
         .post(server.url("/register"))
-        .json(&json!({
-            "username": username,
-            "root_public_key": public_key_hex,
-            "pow_nonce": 0
-        }))
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
         .send()
         .await
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("Insufficient Proof-of-Work"));
+    let bytes = resp.bytes().await.unwrap();
+    let err = ErrorResponse::decode(bytes).unwrap();
+    assert!(err.message.contains("Insufficient Proof-of-Work"));
 }
 
 #[tokio::test]
@@ -45,13 +53,19 @@ async fn test_expired_share_retrieval() {
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
+    
+    let req = RegisterIdentityRequest {
+        username: username.to_string(),
+        root_public_key: public_key_hex.clone(),
+        pow_nonce,
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
     let resp = client
         .post(server.url("/register"))
-        .json(&json!({
-            "username": username,
-            "root_public_key": &public_key_hex,
-            "pow_nonce": pow_nonce
-        }))
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
         .send()
         .await
         .unwrap();
@@ -84,8 +98,9 @@ async fn test_expired_share_retrieval() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let share_data: serde_json::Value = resp.json().await.unwrap();
-    let share_id = share_data["id"].as_str().unwrap();
+    let bytes = resp.bytes().await.unwrap();
+    let upload_res = UploadResponse::decode(bytes).unwrap();
+    let share_id = upload_res.id;
 
     // 3. Wait for expiration
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;

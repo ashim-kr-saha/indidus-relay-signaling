@@ -2,8 +2,30 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use reqwest::{Client, StatusCode};
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
+use indidus_proto::signaling::{RegisterIdentityRequest, FriendRequest, FriendsList};
+use prost::Message;
+
+async fn register_user(client: &Client, url: &str, username: &str, difficulty: u32) -> (String, SigningKey) {
+    let mut rng = rand::thread_rng();
+    let sk = SigningKey::generate(&mut rng);
+    let pk_hex = hex::encode(sk.verifying_key().as_bytes());
+    let pow = solve_pow(username, difficulty);
+
+    let req = RegisterIdentityRequest {
+        username: username.to_string(),
+        root_public_key: pk_hex.clone(),
+        pow_nonce: pow,
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
+    client.post(url)
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
+        .send().await.unwrap();
+    (pk_hex, sk)
+}
 
 #[tokio::test]
 async fn test_friend_request_lifecycle() {
@@ -11,42 +33,27 @@ async fn test_friend_request_lifecycle() {
     let client = Client::new();
 
     // 1. Setup Alice
-    let alice_key = SigningKey::generate(&mut rand::thread_rng());
-    let alice_pk_hex = hex::encode(alice_key.verifying_key().as_bytes());
-    let alice_pow = solve_pow("alice", server.config.auth.registration_difficulty);
-    client
-        .post(server.url("/register"))
-        .json(
-            &json!({"username": "alice", "root_public_key": alice_pk_hex, "pow_nonce": alice_pow}),
-        )
-        .send()
-        .await
-        .unwrap();
+    let (alice_pk_hex, alice_key) = register_user(&client, &server.url("/register"), "alice", server.config.auth.registration_difficulty).await;
 
     // 2. Setup Bob
-    let bob_key = SigningKey::generate(&mut rand::thread_rng());
-    let bob_pk_hex = hex::encode(bob_key.verifying_key().as_bytes());
-    let bob_pow = solve_pow("bob", server.config.auth.registration_difficulty);
-    client
-        .post(server.url("/register"))
-        .json(&json!({"username": "bob", "root_public_key": bob_pk_hex, "pow_nonce": bob_pow}))
-        .send()
-        .await
-        .unwrap();
+    let (bob_pk_hex, bob_key) = register_user(&client, &server.url("/register"), "bob", server.config.auth.registration_difficulty).await;
 
     // 3. Alice sends friend request to Bob
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    let body = json!({ "friend_username": "bob" });
-    let body_bytes = serde_json::to_vec(&body).unwrap();
+    
+    let freq = FriendRequest { target_username: "bob".to_string() };
+    let mut fbuf = Vec::new();
+    freq.encode(&mut fbuf).unwrap();
+
     let signature = generate_signature(
         &alice_key.to_bytes(),
         "POST",
         "/friends",
         timestamp,
-        &body_bytes,
+        &fbuf,
     );
 
     let resp = client
@@ -55,7 +62,8 @@ async fn test_friend_request_lifecycle() {
         .header("X-Public-Key", &alice_pk_hex)
         .header("X-Timestamp", timestamp.to_string())
         .header("X-Signature", signature)
-        .json(&body)
+        .header("Content-Type", "application/x-protobuf")
+        .body(fbuf)
         .send()
         .await
         .unwrap();
@@ -93,15 +101,18 @@ async fn test_friend_request_lifecycle() {
         .header("X-Public-Key", &alice_pk_hex)
         .header("X-Timestamp", timestamp.to_string())
         .header("X-Signature", signature)
+        .header("Accept", "application/x-protobuf")
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let friends: Vec<serde_json::Value> = resp.json().await.unwrap();
+    
+    let bytes = resp.bytes().await.unwrap();
+    let friends = FriendsList::decode(bytes).unwrap();
     assert!(
-        friends
+        friends.friends
             .iter()
-            .any(|f| f["username"] == "bob" && f["status"] == "confirmed")
+            .any(|f| f.username == "bob" && f.status == "confirmed")
     );
 
     // 6. Alice removes Bob
@@ -135,9 +146,12 @@ async fn test_friend_request_lifecycle() {
         .header("X-Public-Key", &alice_pk_hex)
         .header("X-Timestamp", timestamp.to_string())
         .header("X-Signature", signature)
+        .header("Accept", "application/x-protobuf")
         .send()
         .await
         .unwrap();
-    let friends: Vec<serde_json::Value> = resp.json().await.unwrap();
-    assert!(!friends.iter().any(|f| f["username"] == "bob"));
+    
+    let bytes = resp.bytes().await.unwrap();
+    let friends = FriendsList::decode(bytes).unwrap();
+    assert!(!friends.friends.iter().any(|f| f.username == "bob"));
 }

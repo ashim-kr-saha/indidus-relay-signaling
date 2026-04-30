@@ -1,11 +1,11 @@
-use crate::{Result, server::AppState};
+use crate::{Result, server::AppState, proto::Protobuf};
 use axum::{
-    Json,
     extract::State,
     http::{HeaderMap, Method, Uri},
     response::IntoResponse,
 };
 use std::sync::Arc;
+use indidus_proto::signaling::{AuditLog, AuditLogsList};
 
 pub async fn get_audit_logs(
     State(state): State<Arc<AppState>>,
@@ -20,5 +20,12 @@ pub async fn get_audit_logs(
     let id = identity_id.clone();
     let logs = state.db_call(move |db| db.get_audit_logs(&id)).await?;
 
-    Ok(Json(logs))
+    let entries = logs.into_iter().map(|l| AuditLog {
+        id: l.id,
+        event_type: l.event_type,
+        metadata: l.metadata,
+        created_at: l.created_at,
+    }).collect();
+
+    Ok(Protobuf(AuditLogsList { logs: entries }))
 }

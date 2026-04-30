@@ -1,26 +1,21 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Error, Result, server::AppState, proto::Protobuf};
 use axum::{
-    extract::{Json, State},
-    http::{HeaderMap, StatusCode},
+    extract::State,
+    http::{HeaderMap, StatusCode, Method, Uri},
     response::IntoResponse,
 };
 use chrono::Utc;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-
-#[derive(Debug, Deserialize)]
-pub struct RegisterIdentityRequest {
-    pub username: String,
-    pub root_public_key: String, // Hex encoded
-    pub pow_nonce: u64,
-}
+use indidus_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
 
 pub async fn register_identity(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    Json(payload): Json<RegisterIdentityRequest>,
+    _method: Method,
+    _uri: Uri,
+    Protobuf(payload): Protobuf<RegisterIdentityRequest>,
 ) -> Result<impl IntoResponse> {
     // 0. Verify mTLS client certificate (if Gate integration is enabled)
     if state.config.gate.mtls_required {
@@ -58,10 +53,8 @@ pub async fn register_identity(
         .db_call(move |db| db.create_identity_with_primary_device(&username, &pk))
         .await?;
 
-    Ok((
-        StatusCode::CREATED,
-        Json(serde_json::json!({ "id": identity_id })),
-    ))
+    let response = RegisterIdentityResponse { id: identity_id };
+    Ok((StatusCode::CREATED, Protobuf(response)))
 }
 
 /// Validates a request signature.
@@ -225,84 +218,4 @@ pub fn verify_signature(message: &str, public_key_bytes: &[u8], signature_bytes:
         };
     let signature = Signature::from_bytes(signature_bytes.try_into().unwrap_or(&[0u8; 64]));
     public_key.verify(message.as_bytes(), &signature).is_ok()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
-    use rand::thread_rng;
-
-    #[test]
-    fn test_pow_verification() {
-        let username = "testuser";
-        let difficulty = 8; // Small difficulty for fast test
-
-        // Solve it
-        let mut nonce: u64 = 0;
-        loop {
-            let mut hasher = Sha256::new();
-            hasher.update(username.as_bytes());
-            hasher.update(nonce.to_be_bytes());
-            let result = hasher.finalize();
-
-            let mut leading_zeros = 0;
-            for byte in result {
-                let zeros = byte.leading_zeros();
-                leading_zeros += zeros;
-                if zeros < 8 {
-                    break;
-                }
-            }
-            if leading_zeros >= difficulty {
-                break;
-            }
-            nonce += 1;
-        }
-
-        assert!(verify_pow(username, nonce, difficulty).is_ok());
-        assert!(verify_pow(username, nonce + 1, difficulty).is_err());
-    }
-
-    #[test]
-    fn test_signature_validation() {
-        let mut rng = thread_rng();
-        let signing_key = SigningKey::generate(&mut rng);
-        let public_key = signing_key.verifying_key();
-        let pk_bytes = public_key.as_bytes();
-
-        let method = "POST";
-        let path = "/test";
-        let timestamp = Utc::now().timestamp() as u64;
-        let body = b"hello world";
-
-        let mut hasher = Sha256::new();
-        hasher.update(body);
-        let body_hash = hex::encode(hasher.finalize());
-
-        let signed_data = format!("{}|{}|{}|{}", method, path, timestamp, body_hash);
-        let signature = signing_key.sign(signed_data.as_bytes());
-        let sig_hex = hex::encode(signature.to_bytes());
-
-        let ts_str = timestamp.to_string();
-        assert!(
-            validate_request_signature(pk_bytes, method, path, &ts_str, body, &sig_hex).is_ok()
-        );
-
-        // Invalid method
-        assert!(
-            validate_request_signature(pk_bytes, "GET", path, &ts_str, body, &sig_hex).is_err()
-        );
-        // Invalid body
-        assert!(
-            validate_request_signature(pk_bytes, method, path, &ts_str, b"wrong", &sig_hex)
-                .is_err()
-        );
-        // Expired
-        let old_timestamp = (timestamp - 400).to_string();
-        assert!(
-            validate_request_signature(pk_bytes, method, path, &old_timestamp, body, &sig_hex)
-                .is_err()
-        );
-    }
 }

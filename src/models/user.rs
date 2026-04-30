@@ -42,3 +42,35 @@ pub struct AuditLogEntry {
     pub metadata: Option<String>,
     pub created_at: String,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FriendResponse {
+    pub username: String,
+    pub status: String,
+    pub last_active: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MailboxMessage {
+    pub id: String,
+    pub payload: Vec<u8>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultInviteResponse {
+    pub id: String,
+    pub vault_id: String,
+    pub inviter_username: String,
+    pub status: String,
+    pub created_at: String,
+    pub role: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultMemberResponse {
+    pub user_id: String,
+    pub username: String,
+    pub role: String,
+    pub joined_at: String,
+}

@@ -1,10 +1,10 @@
+use crate::proto::Protobuf;
 use axum::{
-    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use serde_json::json;
 use thiserror::Error;
+use indidus_proto::signaling::ErrorResponse;
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -36,9 +36,9 @@ impl IntoResponse for Error {
             Error::BadRequest(e) => (StatusCode::BAD_REQUEST, e),
         };
 
-        let body = Json(json!({
-            "error": error_message,
-        }));
+        let body = Protobuf(ErrorResponse {
+            message: error_message,
+        });
 
         (status, body).into_response()
     }

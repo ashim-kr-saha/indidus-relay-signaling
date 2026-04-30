@@ -9,6 +9,7 @@ pub mod mailbox;
 pub mod models;
 pub mod pairing;
 pub mod push;
+pub mod proto;
 pub mod relay;
 pub mod server;
 pub mod signaling;

@@ -1,46 +1,46 @@
-# Indidus Relay Signaling Server (v4.5)
+# Indidus Relay Signaling Server (v5.0)
 
-A high-performance, unified server for the **Indidus Password Manager** ecosystem. This crate handles both **P2P Signaling** (for device sync) and **Zero-Knowledge Relay** (for secure sharing).
+A high-performance, **strictly binary-only** unified server for the **Indidus Password Manager** ecosystem. This crate handles both **P2P Signaling** (for device sync) and **Zero-Knowledge Relay** (for secure sharing) using a unified **Protobuf** wire protocol.
 
-## 🛡️ Security Architecture: mTLS & Private CA
+## 🛡️ Security Architecture: Strict Protobuf & mTLS
 
-As of v4.5, the signaling server has transitioned to a **Mutual TLS (mTLS)** security model. This ensures that only devices with a valid certificate issued by your private **Indidus Gate** server can communicate with the infrastructure.
+As of v5.0, the signaling server has transitioned to a **strictly binary-only** transport. All legacy JSON endpoints have been purged to improve performance, reduce memory pressure, and minimize the attack surface.
 
 ### 1. Identity Verification
-- **mTLS Primary**: The server expects a reverse proxy (e.g., Caddy) to verify client certificates and forward the identity via `X-Client-Cert-CN` (Common Name) and `X-Client-Cert-Serial` headers.
-- **X-Signature Protocol**: Every request is cryptographically signed (`METHOD|PATH|TIMESTAMP|BODY_HASH`) using the device's Ed25519 private key, verified against the public key stored during registration.
-- **Zero-Trust**: Even with a valid TLS certificate, the server still validates every request signature to prevent impersonation.
+- **mTLS Primary**: The server expects a reverse proxy (e.g., Caddy) to verify client certificates and forward the identity via `X-Client-Cert-CN` and `X-Client-Cert-Serial` headers.
+- **X-Signature Protocol**: Every request is cryptographically signed (`METHOD|PATH|TIMESTAMP|BODY_HASH`) using the device's Ed25519 private key.
+- **Binary Hardening**: Signaling messages are exclusively transmitted as binary Protobuf frames via WebSockets, eliminating UTF-8 validation and text-based injection risks.
 
 ### 2. Backward Compatibility (Self-Hosters)
-- **Optional PoW**: For self-hosted deployments where mTLS is not required, the server supports a legacy **Proof-of-Work (PoW)** registration model.
-- **Configurable Difficulty**: Set `rate_limit.enabled = true` and `auth.registration_difficulty` in `config.toml` to protect against spam in non-mTLS environments.
+- **Optional PoW**: For self-hosted deployments where mTLS is not required, the server supports a **Proof-of-Work (PoW)** registration model.
+- **Configurable Difficulty**: Set `rate_limit.enabled = true` and `auth.registration_difficulty` in `config.toml`.
 
-## 🚀 Dual-Role Features
+## 🚀 Unified Features
 
 ### 1. Stateless Signaling (WebSockets)
-- **Low-Latency Routing**: Facilitates P2P connections between Indidus devices for vault synchronization.
+- **Binary Routing**: Facilitates P2P connections using strictly-typed Protobuf frames.
 - **Lock-Free Scaling**: Uses `DashMap` for concurrent peer tracking, achieving sub-microsecond routing latencies.
 - **Offline Mailbox**: Encrypted signaling messages are queued in a local SQLite database if the target device is offline.
 
 ### 2. Zero-Knowledge Relay (HTTP)
 - **Encrypted Share Blobs**: Stores AES-GCM-256 encrypted shares for cross-device data transfer.
-- **Blind Storage**: The server never sees decryption keys; it only serves the blob.
+- **Blind Storage**: The server only manages binary blobs; it never sees decryption keys.
 - **Automatic Pruning**: Shares automatically expire based on TTL or view counts.
-- **Embedded Viewer**: Serves the [indidus-wasm-share-client](../indidus-wasm-share-client) directly for secure browser-based decryption.
+- **Embedded Viewer**: Serves the [indidus-wasm-share-client](../indidus-wasm-share-client) directly.
 
-## 📊 Benchmarks (Production Profile)
+## 📊 Benchmarks (Strict Protobuf Profile)
 
-| Operation | Latency | Performance |
+| Operation | Latency | Protocol |
 | :--- | :--- | :--- |
-| **WS Message Routing** | **129 ns** | 1000 active peers |
-| **Identity Registration** | **192 µs** | Difficulty 8 PoW |
-| **Device Listing** | **144 µs** | SQLite lookup |
-| **Relay Write (64KB)** | **50 µs** | SQLite storage |
-| **Relay Read (64KB)** | **6.6 µs** | SQLite retrieval |
+| **Identity Registration** | **199 µs** | **Protobuf (Binary)** |
+| **Device Listing** | **147 µs** | **Protobuf (Binary)** |
+| **WS Message Routing** | **130 ns** | **Binary Frame** |
+| **Relay Write (64KB)** | **50 µs** | Binary Blob |
+| **Relay Read (64KB)** | **6.6 µs** | Binary Blob |
 
 ## 🛠️ Configuration
 
-The server is configured via `config.toml`. Key sections:
+The server is configured via `config.toml`.
 
 ```toml
 [server]
@@ -49,9 +49,6 @@ port = 8080
 
 [gate]
 mtls_required = true
-# Headers forwarded by Caddy
-cn_header = "X-Client-Cert-CN"
-serial_header = "X-Client-Cert-Serial"
 
 [rate_limit]
 enabled = true
@@ -60,7 +57,7 @@ burst_size = 5
 ```
 
 ## 📈 Scalability
-Designed to run on **1-vCPU / 2GB RAM** instances, capable of handling 100k+ clients with minimal memory footprint.
+Capable of handling **100k+ clients** on a single vCPU with minimal memory footprint, leveraging `mimalloc` and zero-copy binary serialization.
 
 ## ⚖️ License
 Apache-2.0

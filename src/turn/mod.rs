@@ -1,32 +1,24 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Error, Result, server::AppState, proto::Protobuf};
 use axum::{
-    Json,
     extract::State,
     http::{HeaderMap, Method, Uri},
+    response::IntoResponse,
 };
 use base64::prelude::*;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
-use serde::Serialize;
 use sha1::Sha1;
 use std::sync::Arc;
+use indidus_proto::signaling::TurnResponse;
 
 type HmacSha1 = Hmac<Sha1>;
-
-#[derive(Debug, Serialize)]
-pub struct TurnResponse {
-    pub username: String,
-    pub password: String,
-    pub ttl: u64,
-    pub uris: Vec<String>,
-}
 
 pub async fn get_turn_credentials(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     method: Method,
     uri: Uri,
-) -> Result<Json<TurnResponse>> {
+) -> Result<impl IntoResponse> {
     let identity_id =
         crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &[])
             .await?;
@@ -44,7 +36,7 @@ pub async fn get_turn_credentials(
     let result = mac.finalize();
     let password = BASE64_STANDARD.encode(result.into_bytes());
 
-    Ok(Json(TurnResponse {
+    Ok(Protobuf(TurnResponse {
         username,
         password,
         ttl: ttl as u64,

@@ -2,8 +2,31 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use reqwest::{Client, StatusCode};
-use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
+use indidus_proto::signaling::RegisterIdentityRequest;
+use indidus_proto::relay::UploadResponse;
+use prost::Message;
+
+async fn register_user(client: &Client, url: &str, username: &str, difficulty: u32) -> (String, SigningKey) {
+    let mut rng = rand::thread_rng();
+    let sk = SigningKey::generate(&mut rng);
+    let pk_hex = hex::encode(sk.verifying_key().as_bytes());
+    let pow = solve_pow(username, difficulty);
+
+    let req = RegisterIdentityRequest {
+        username: username.to_string(),
+        root_public_key: pk_hex.clone(),
+        pow_nonce: pow,
+    };
+    let mut buf = Vec::new();
+    req.encode(&mut buf).unwrap();
+
+    client.post(url)
+        .header("Content-Type", "application/x-protobuf")
+        .body(buf)
+        .send().await.unwrap();
+    (pk_hex, sk)
+}
 
 #[tokio::test]
 async fn test_relay_blob_storage() {
@@ -12,17 +35,7 @@ async fn test_relay_blob_storage() {
     let username = "alice";
 
     // 1. Setup Identity
-    let mut rng = rand::thread_rng();
-    let signing_key = SigningKey::generate(&mut rng);
-    let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
-    let pow = solve_pow(username, server.config.auth.registration_difficulty);
-
-    client
-        .post(server.url("/register"))
-        .json(&json!({"username": username, "root_public_key": public_key_hex, "pow_nonce": pow}))
-        .send()
-        .await
-        .unwrap();
+    let (public_key_hex, signing_key) = register_user(&client, &server.url("/register"), username, server.config.auth.registration_difficulty).await;
 
     // 2. Upload blob
     let payload = vec![1, 2, 3, 4, 5];
@@ -52,8 +65,9 @@ async fn test_relay_blob_storage() {
         .unwrap();
 
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let upload_res: serde_json::Value = resp.json().await.unwrap();
-    let share_id = upload_res["id"].as_str().unwrap().to_string();
+    let bytes = resp.bytes().await.unwrap();
+    let upload_res = UploadResponse::decode(bytes).unwrap();
+    let share_id = upload_res.id;
 
     // 3. Download blob (View 1)
     let resp = client
@@ -89,17 +103,7 @@ async fn test_relay_revocation() {
     let username = "bob";
 
     // Setup user
-    let mut rng = rand::thread_rng();
-    let signing_key = SigningKey::generate(&mut rng);
-    let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
-    let pow = solve_pow(username, server.config.auth.registration_difficulty);
-
-    client
-        .post(server.url("/register"))
-        .json(&json!({"username": username, "root_public_key": public_key_hex, "pow_nonce": pow}))
-        .send()
-        .await
-        .unwrap();
+    let (public_key_hex, signing_key) = register_user(&client, &server.url("/register"), username, server.config.auth.registration_difficulty).await;
 
     // Upload blob
     let payload = vec![1, 2, 3];
@@ -126,10 +130,9 @@ async fn test_relay_revocation() {
         .await
         .unwrap();
 
-    let share_id = resp.json::<serde_json::Value>().await.unwrap()["id"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let bytes = resp.bytes().await.unwrap();
+    let upload_res = UploadResponse::decode(bytes).unwrap();
+    let share_id = upload_res.id;
 
     // Revoke
     let timestamp = SystemTime::now()

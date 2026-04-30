@@ -1,55 +1,39 @@
-use crate::{Error, Result, server::AppState};
+use crate::{Error, Result, server::AppState, proto::Protobuf};
 use axum::{
-    Json,
     extract::{Path, State},
+    response::IntoResponse,
 };
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
-
-#[derive(Debug, Deserialize)]
-pub struct InitiatePairingRequest {
-    pub message: Vec<u8>, // SPAKE2 Message A
-}
-
-#[derive(Debug, Serialize)]
-pub struct InitiatePairingResponse {
-    pub session_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RespondPairingRequest {
-    pub message: Vec<u8>, // SPAKE2 Message B
-}
-
-#[derive(Debug, Serialize)]
-pub struct RespondPairingResponse {
-    pub message: Vec<u8>, // SPAKE2 Message A
-}
+use indidus_proto::signaling::{
+    InitiatePairingRequest, InitiatePairingResponse, 
+    RespondPairingRequest, RespondPairingResponse,
+    PairingPollResponse
+};
 
 pub async fn initiate_pairing(
     State(state): State<Arc<AppState>>,
-    Json(payload): Json<InitiatePairingRequest>,
-) -> Result<Json<InitiatePairingResponse>> {
+    Protobuf(payload): Protobuf<InitiatePairingRequest>,
+) -> Result<impl IntoResponse> {
     let session_id = Uuid::new_v4().to_string();
     state
         .pairing_sessions
         .insert(session_id.clone(), (payload.message, None));
 
-    Ok(Json(InitiatePairingResponse { session_id }))
+    Ok(Protobuf(InitiatePairingResponse { session_id }))
 }
 
 pub async fn respond_pairing(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
-    Json(payload): Json<RespondPairingRequest>,
-) -> Result<Json<RespondPairingResponse>> {
+    Protobuf(payload): Protobuf<RespondPairingRequest>,
+) -> Result<impl IntoResponse> {
     if let Some(session) = state.pairing_sessions.get(&session_id) {
         let msg_a = session.0.clone();
         state
             .pairing_sessions
             .insert(session_id, (msg_a.clone(), Some(payload.message)));
-        Ok(Json(RespondPairingResponse { message: msg_a }))
+        Ok(Protobuf(RespondPairingResponse { message: msg_a }))
     } else {
         Err(Error::NotFound)
     }
@@ -58,10 +42,10 @@ pub async fn respond_pairing(
 pub async fn poll_pairing(
     State(state): State<Arc<AppState>>,
     Path(session_id): Path<String>,
-) -> Result<Json<Vec<u8>>> {
+) -> Result<impl IntoResponse> {
     if let Some(session) = state.pairing_sessions.get(&session_id) {
         if let Some(msg_b) = &session.1 {
-            Ok(Json(msg_b.clone()))
+            Ok(Protobuf(PairingPollResponse { message: msg_b.clone() }))
         } else {
             Err(Error::BadRequest("Pending response".to_string()))
         }

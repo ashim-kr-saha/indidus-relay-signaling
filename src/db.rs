@@ -1,4 +1,4 @@
-use crate::models::user::{AuditLogEntry, DeviceResponse};
+use crate::models::user::{AuditLogEntry, DeviceResponse, FriendResponse, MailboxMessage, VaultInviteResponse, VaultMemberResponse};
 use chrono::{DateTime, Utc};
 use mini_moka::sync::Cache;
 use r2d2::Pool;
@@ -366,7 +366,7 @@ impl Db {
     pub fn get_friends(
         &self,
         identity_id: &str,
-    ) -> anyhow::Result<Vec<crate::friends::FriendResponse>> {
+    ) -> anyhow::Result<Vec<FriendResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare("
             SELECT i.username, f.status, 
@@ -375,7 +375,7 @@ impl Db {
             JOIN identities i ON (i.id = f.identity_id_2 AND f.identity_id_1 = ?1) OR (i.id = f.identity_id_1 AND f.identity_id_2 = ?1)
         ")?;
         let rows = stmt.query_map([identity_id], |row| {
-            Ok(crate::friends::FriendResponse {
+            Ok(FriendResponse {
                 username: row.get(0)?,
                 status: row.get(1)?,
                 last_active: row.get(2)?,
@@ -528,14 +528,14 @@ impl Db {
     pub fn get_and_clear_mailbox(
         &self,
         device_id: &str,
-    ) -> anyhow::Result<Vec<crate::mailbox::MailboxMessage>> {
+    ) -> anyhow::Result<Vec<MailboxMessage>> {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
 
         let messages = {
             let mut stmt = tx.prepare("SELECT id, payload, created_at FROM mailbox WHERE target_device_id = ?1 ORDER BY created_at ASC")?;
             let rows = stmt.query_map([device_id], |row| {
-                Ok(crate::mailbox::MailboxMessage {
+                Ok(MailboxMessage {
                     id: row.get(0)?,
                     payload: row.get(1)?,
                     created_at: row.get(2)?,
@@ -590,7 +590,7 @@ impl Db {
     pub fn get_pending_vault_invites(
         &self,
         identity_id: &str,
-    ) -> anyhow::Result<Vec<crate::vaults::VaultInviteResponse>> {
+    ) -> anyhow::Result<Vec<VaultInviteResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "
@@ -602,7 +602,7 @@ impl Db {
         )?;
 
         let rows = stmt.query_map([identity_id], |row| {
-            Ok(crate::vaults::VaultInviteResponse {
+            Ok(VaultInviteResponse {
                 id: row.get(0)?,
                 vault_id: row.get(1)?,
                 inviter_username: row.get(2)?,
@@ -654,7 +654,7 @@ impl Db {
     pub fn get_vault_members(
         &self,
         vault_id: &str,
-    ) -> anyhow::Result<Vec<crate::vaults::VaultMemberResponse>> {
+    ) -> anyhow::Result<Vec<VaultMemberResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "
@@ -666,7 +666,7 @@ impl Db {
         )?;
 
         let rows = stmt.query_map([vault_id], |row| {
-            Ok(crate::vaults::VaultMemberResponse {
+            Ok(VaultMemberResponse {
                 user_id: row.get(0)?,
                 username: row.get(1)?,
                 role: row.get(2)?,
