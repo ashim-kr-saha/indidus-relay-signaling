@@ -19,14 +19,30 @@ pub struct RegisterIdentityRequest {
 
 pub async fn register_identity(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(payload): Json<RegisterIdentityRequest>,
 ) -> Result<impl IntoResponse> {
-    // 1. Verify Proof-of-Work
-    verify_pow(
-        &payload.username,
-        payload.pow_nonce,
-        state.config.auth.registration_difficulty,
-    )?;
+    // 0. Verify mTLS client certificate (if Gate integration is enabled)
+    if state.config.gate.mtls_required {
+        let verified = headers
+            .get("X-Client-Cert-Verified")
+            .and_then(|h| h.to_str().ok())
+            .unwrap_or("false");
+        if verified != "true" {
+            return Err(Error::Auth(
+                "Valid client certificate required for registration".to_string(),
+            ));
+        }
+    }
+
+    // 1. Verify Proof-of-Work (skipped if difficulty is 0)
+    if state.config.auth.registration_difficulty > 0 {
+        verify_pow(
+            &payload.username,
+            payload.pow_nonce,
+            state.config.auth.registration_difficulty,
+        )?;
+    }
 
     // 2. Decode Public Key
     let public_key_bytes = hex::decode(&payload.root_public_key)

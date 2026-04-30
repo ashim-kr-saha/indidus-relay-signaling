@@ -9,6 +9,9 @@ pub struct Config {
     pub auth: AuthConfig,
     pub turn: TurnConfig,
     pub relay: RelayConfig,
+    #[serde(default)]
+    pub gate: GateConfig,
+    pub rate_limit: RateLimitConfig,
 }
 
 impl Default for Config {
@@ -33,6 +36,8 @@ impl Default for Config {
                 max_share_size: 10 * 1024 * 1024, // 10MB
                 default_ttl: 3600,                // 1 hour
             },
+            gate: GateConfig::default(),
+            rate_limit: RateLimitConfig::default(),
         }
     }
 }
@@ -64,6 +69,42 @@ pub struct RelayConfig {
     pub storage_path: String,
     pub max_share_size: usize,
     pub default_ttl: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitConfig {
+    pub enabled: bool,
+    pub requests_per_second: u32,
+    pub burst_size: u32,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            requests_per_second: 1,
+            burst_size: 5,
+        }
+    }
+}
+
+/// Configuration for Gate server mTLS integration.
+/// When `mtls_required` is true, the signaling server expects the reverse proxy
+/// (Caddy) to verify client certificates and forward the result via headers.
+/// When false, PoW-only mode is used (for self-hosters).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GateConfig {
+    /// When true, registration requires a valid client certificate
+    /// verified by the reverse proxy (X-Client-Cert-Verified header).
+    pub mtls_required: bool,
+}
+
+impl Default for GateConfig {
+    fn default() -> Self {
+        Self {
+            mtls_required: false,
+        }
+    }
 }
 
 impl Config {

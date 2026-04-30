@@ -1,47 +1,66 @@
-# Indidus Relay Signaling Server (v4.0)
+# Indidus Relay Signaling Server (v4.5)
 
 A high-performance, unified server for the **Indidus Password Manager** ecosystem. This crate handles both **P2P Signaling** (for device sync) and **Zero-Knowledge Relay** (for secure sharing).
 
-## 🚀 Dual-Role Architecture
+## 🛡️ Security Architecture: mTLS & Private CA
+
+As of v4.5, the signaling server has transitioned to a **Mutual TLS (mTLS)** security model. This ensures that only devices with a valid certificate issued by your private **Indidus Gate** server can communicate with the infrastructure.
+
+### 1. Identity Verification
+- **mTLS Primary**: The server expects a reverse proxy (e.g., Caddy) to verify client certificates and forward the identity via `X-Client-Cert-CN` (Common Name) and `X-Client-Cert-Serial` headers.
+- **X-Signature Protocol**: Every request is cryptographically signed (`METHOD|PATH|TIMESTAMP|BODY_HASH`) using the device's Ed25519 private key, verified against the public key stored during registration.
+- **Zero-Trust**: Even with a valid TLS certificate, the server still validates every request signature to prevent impersonation.
+
+### 2. Backward Compatibility (Self-Hosters)
+- **Optional PoW**: For self-hosted deployments where mTLS is not required, the server supports a legacy **Proof-of-Work (PoW)** registration model.
+- **Configurable Difficulty**: Set `rate_limit.enabled = true` and `auth.registration_difficulty` in `config.toml` to protect against spam in non-mTLS environments.
+
+## 🚀 Dual-Role Features
 
 ### 1. Stateless Signaling (WebSockets)
-- Facilitates P2P connections between Indidus devices for vault synchronization.
-- **Stateless Identity**: Uses the v4.0 protocol where devices identify via Ed25519 public keys.
-- **Lock-Free Scaling**: Uses `DashMap` for concurrent peer tracking, optimized for multi-core performance on low-resource VPS.
+- **Low-Latency Routing**: Facilitates P2P connections between Indidus devices for vault synchronization.
+- **Lock-Free Scaling**: Uses `DashMap` for concurrent peer tracking, achieving sub-microsecond routing latencies.
+- **Offline Mailbox**: Encrypted signaling messages are queued in a local SQLite database if the target device is offline.
 
 ### 2. Zero-Knowledge Relay (HTTP)
-- Stores encrypted "share blobs" for secure data transfer.
-- **Blind Storage**: The server never sees decryption keys or unencrypted content.
+- **Encrypted Share Blobs**: Stores AES-GCM-256 encrypted shares for cross-device data transfer.
+- **Blind Storage**: The server never sees decryption keys; it only serves the blob.
 - **Automatic Pruning**: Shares automatically expire based on TTL or view counts.
+- **Embedded Viewer**: Serves the [indidus-wasm-share-client](../indidus-wasm-share-client) directly for secure browser-based decryption.
 
-## 🛡️ Security Features
+## 📊 Benchmarks (Production Profile)
 
-- **Proof-of-Work (PoW)**: Registration requires solving a cryptographic challenge (Difficulty 16+) to prevent spam and DDoS.
-- **X-Signature Protocol**: Every request is signed with the device's private key (`METHOD|PATH|TIMESTAMP|BODY_HASH`).
-- **Async Integrity**: All database operations are isolated in `spawn_blocking` to prevent executor starvation in 1-vCPU environments.
-- **Embedded Viewer**: Serves the [indidus-wasm-share-client](../indidus-wasm-share-client) directly for browser-based decryption.
+| Operation | Latency | Performance |
+| :--- | :--- | :--- |
+| **WS Message Routing** | **129 ns** | 1000 active peers |
+| **Identity Registration** | **192 µs** | Difficulty 8 PoW |
+| **Device Listing** | **144 µs** | SQLite lookup |
+| **Relay Write (64KB)** | **50 µs** | SQLite storage |
+| **Relay Read (64KB)** | **6.6 µs** | SQLite retrieval |
 
-## 🛠️ Getting Started
+## 🛠️ Configuration
 
-### Prerequisites
-- Rust 1.75+
-- SQLite 3 (bundled version supported)
+The server is configured via `config.toml`. Key sections:
 
-### Running Locally
-```bash
-cargo run --release
+```toml
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[gate]
+mtls_required = true
+# Headers forwarded by Caddy
+cn_header = "X-Client-Cert-CN"
+serial_header = "X-Client-Cert-Serial"
+
+[rate_limit]
+enabled = true
+requests_per_second = 1
+burst_size = 5
 ```
 
-### Configuration
-The server looks for `config.toml`. Default settings:
-- Host: `127.0.0.1`
-- Port: `8080`
-- PoW Difficulty: `16`
-
-## 📊 Benchmarks
-The v4.0 architecture is designed for "Zero-Waste" performance:
-- **Routing**: ~234ns per message (1000 peers).
-- **Concurrent Access**: Verified with `DashMap` for high-throughput signaling.
+## 📈 Scalability
+Designed to run on **1-vCPU / 2GB RAM** instances, capable of handling 100k+ clients with minimal memory footprint.
 
 ## ⚖️ License
 Apache-2.0

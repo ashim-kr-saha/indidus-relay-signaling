@@ -59,7 +59,7 @@ impl AppState {
 
 pub fn create_app(state: Arc<AppState>) -> Router {
     // Rate limiting configuration: 1 request every 2 seconds (30/min) per IP
-    let governor_config = Arc::new(
+    let _governor_config = Arc::new(
         GovernorConfigBuilder::default()
             .per_second(1)
             .burst_size(5)
@@ -67,77 +67,55 @@ pub fn create_app(state: Arc<AppState>) -> Router {
             .unwrap(),
     );
 
-    Router::new()
+    let mut router = Router::new()
         .route("/health", get(health_check))
-        .route(
-            "/register",
-            post(crate::auth::register_identity).layer(GovernorLayer::new(governor_config.clone())),
-        )
-        .route(
-            "/devices",
-            post(crate::devices::register_device)
-                .get(crate::devices::list_devices)
-                .layer(GovernorLayer::new(governor_config.clone())),
-        )
-        .route(
-            "/devices/{id}",
-            post(crate::devices::revoke_device).layer(GovernorLayer::new(governor_config.clone())),
-        )
-        .route(
-            "/friends",
-            post(crate::friends::send_friend_request)
-                .get(crate::friends::list_friends)
-                .layer(GovernorLayer::new(governor_config.clone())),
-        )
-        .route(
-            "/friends/accept/{username}",
-            post(crate::friends::accept_friend_request),
-        )
+        .route("/friends/accept/{username}", post(crate::friends::accept_friend_request))
         .route("/friends/{username}", delete(crate::friends::remove_friend))
         .route("/turn", get(crate::turn::get_turn_credentials))
         .route("/audit", get(crate::audit::get_audit_logs))
         .route("/push/{device_id}", get(crate::push::push_stream))
-        .route(
-            "/vaults/invite",
-            post(crate::vaults::invite_to_vault).layer(GovernorLayer::new(governor_config.clone())),
-        )
         .route("/vaults/invites", get(crate::vaults::list_vault_invites))
-        .route(
-            "/vaults/invites/{id}/accept",
-            post(crate::vaults::accept_vault_invite),
-        )
-        .route(
-            "/vaults/{id}/members",
-            get(crate::vaults::list_vault_members),
-        )
+        .route("/vaults/invites/{id}/accept", post(crate::vaults::accept_vault_invite))
+        .route("/vaults/{id}/members", get(crate::vaults::list_vault_members))
         .route("/ws", get(crate::signaling::signaling_handler))
         .route("/mailbox", post(crate::mailbox::enqueue_message))
         .route("/mailbox/{device_id}", get(crate::mailbox::get_mailbox))
-        .route(
-            "/pairing/initiate",
-            post(crate::pairing::initiate_pairing)
-                .layer(GovernorLayer::new(governor_config.clone())),
-        )
-        .route(
-            "/pairing/{session_id}/respond",
-            post(crate::pairing::respond_pairing),
-        )
-        .route(
-            "/pairing/{session_id}/poll",
-            get(crate::pairing::poll_pairing),
-        )
+        .route("/pairing/{session_id}/respond", post(crate::pairing::respond_pairing))
+        .route("/pairing/{session_id}/poll", get(crate::pairing::poll_pairing))
         .route("/shares", post(crate::relay::upload_share))
-        .route(
-            "/shares/{id}",
-            get(crate::relay::download_share).delete(crate::relay::revoke_share),
-        )
-        .route(
-            "/shares/{id}/acknowledge",
-            post(crate::relay::acknowledge_share),
-        )
+        .route("/shares/{id}", get(crate::relay::download_share).delete(crate::relay::revoke_share))
+        .route("/shares/{id}/acknowledge", post(crate::relay::acknowledge_share))
         .route("/v/{id}", get(viewer::serve_viewer))
         .route("/pkg/{*path}", get(viewer::static_handler))
-        .route("/metrics", get(metrics_handler))
+        .route("/metrics", get(metrics_handler));
+
+    if state.config.rate_limit.enabled {
+        let governor_config = Arc::new(
+            GovernorConfigBuilder::default()
+                .per_second(state.config.rate_limit.requests_per_second as u64)
+                .burst_size(state.config.rate_limit.burst_size)
+                .finish()
+                .unwrap(),
+        );
+
+        router = router
+            .route("/register", post(crate::auth::register_identity).layer(GovernorLayer::new(governor_config.clone())))
+            .route("/devices", post(crate::devices::register_device).get(crate::devices::list_devices).layer(GovernorLayer::new(governor_config.clone())))
+            .route("/devices/{id}", post(crate::devices::revoke_device).layer(GovernorLayer::new(governor_config.clone())))
+            .route("/friends", post(crate::friends::send_friend_request).get(crate::friends::list_friends).layer(GovernorLayer::new(governor_config.clone())))
+            .route("/vaults/invite", post(crate::vaults::invite_to_vault).layer(GovernorLayer::new(governor_config.clone())))
+            .route("/pairing/initiate", post(crate::pairing::initiate_pairing).layer(GovernorLayer::new(governor_config.clone())));
+    } else {
+        router = router
+            .route("/register", post(crate::auth::register_identity))
+            .route("/devices", post(crate::devices::register_device).get(crate::devices::list_devices))
+            .route("/devices/{id}", post(crate::devices::revoke_device))
+            .route("/friends", post(crate::friends::send_friend_request).get(crate::friends::list_friends))
+            .route("/vaults/invite", post(crate::vaults::invite_to_vault))
+            .route("/pairing/initiate", post(crate::pairing::initiate_pairing));
+    }
+
+    router
         .layer(TraceLayer::new_for_http())
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB global limit
         .with_state(state)

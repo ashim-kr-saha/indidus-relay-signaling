@@ -17,12 +17,17 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 RELAY_DOMAIN="${RELAY_DOMAIN:-}"
 TURN_SECRET="${TURN_SECRET:-}" # Will auto-generate if empty later
+MTLS_ENABLED="${MTLS_ENABLED:-true}"
+CA_CERT_PATH="${CA_CERT_PATH:-}" # Path to CA certificate for mTLS
 
 # Support CLI flags for better sudo compatibility
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --domain) RELAY_DOMAIN="$2"; shift ;;
         --turn-secret) TURN_SECRET="$2"; shift ;;
+        --token) TURN_SECRET="$2"; shift ;;
+        --ca-cert) CA_CERT_PATH="$2"; shift ;;
+        --no-mtls) MTLS_ENABLED="false" ;;
         *) echo "Unknown parameter: $1"; exit 1 ;;
     esac
     shift
@@ -140,17 +145,75 @@ realm = "indidus"
 storage_path = "${INSTALL_DIR}/data/shares"
 max_share_size = 10485760
 default_ttl = 3600
+
+[gate]
+mtls_required = ${MTLS_ENABLED}
 EOF
 chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/config.toml"
 chmod 640 "$INSTALL_DIR/config.toml"
 
 # ---------------------------------------------------------------------------
-# 5. Configure Caddy (HTTPS reverse proxy)
+# 5. Configure Caddy (HTTPS reverse proxy with optional mTLS)
 # ---------------------------------------------------------------------------
 log "Configuring Caddy..."
 if [[ -n "$RELAY_DOMAIN" ]]; then
-  # Full HTTPS mode with automatic Let's Encrypt cert
-  cat > /etc/caddy/Caddyfile <<EOF
+  if [[ "$MTLS_ENABLED" == "true" && -n "$CA_CERT_PATH" ]]; then
+    # mTLS mode: split routing — API requires client cert, viewer is public
+    log "Configuring mTLS split-routing (api.${RELAY_DOMAIN} + view.${RELAY_DOMAIN})"
+
+    # Copy CA cert to a system location
+    mkdir -p /etc/indidus-gate
+    cp "$CA_CERT_PATH" /etc/indidus-gate/ca-cert.pem
+    chmod 644 /etc/indidus-gate/ca-cert.pem
+
+    cat > /etc/caddy/Caddyfile <<EOF
+# API — mTLS required (all authenticated endpoints)
+api.${RELAY_DOMAIN} {
+    tls {
+        client_auth {
+            mode require_and_verify
+            trusted_ca_cert_file /etc/indidus-gate/ca-cert.pem
+        }
+    }
+
+    reverse_proxy 127.0.0.1:${RELAY_PORT} {
+        header_up X-Client-Cert-Verified true
+    }
+
+    encode gzip
+    log {
+        output stderr
+        format json
+    }
+}
+
+# Viewer — public access (no client cert needed)
+view.${RELAY_DOMAIN} {
+    # Share download (encrypted blob — public by design)
+    reverse_proxy /shares/* 127.0.0.1:${RELAY_PORT}
+
+    # WASM viewer
+    reverse_proxy /v/* 127.0.0.1:${RELAY_PORT}
+    reverse_proxy /pkg/* 127.0.0.1:${RELAY_PORT}
+
+    # Health check
+    reverse_proxy /health 127.0.0.1:${RELAY_PORT}
+
+    encode gzip
+    log {
+        output stderr
+        format json
+    }
+}
+EOF
+    RELAY_URL="https://api.${RELAY_DOMAIN}"
+  else
+    # Non-mTLS mode (self-hosted / --no-mtls)
+    if [[ "$MTLS_ENABLED" == "true" && -z "$CA_CERT_PATH" ]]; then
+      warn "mTLS enabled but no --ca-cert provided. Falling back to standard TLS."
+    fi
+    log "Configuring standard TLS reverse proxy"
+    cat > /etc/caddy/Caddyfile <<EOF
 ${RELAY_DOMAIN} {
     reverse_proxy 127.0.0.1:${RELAY_PORT}
     encode gzip
@@ -160,7 +223,8 @@ ${RELAY_DOMAIN} {
     }
 }
 EOF
-  RELAY_URL="https://${RELAY_DOMAIN}"
+    RELAY_URL="https://${RELAY_DOMAIN}"
+  fi
 else
   # IP-only mode — Always HTTPS using internal self-signed cert
   warn "No RELAY_DOMAIN set. Running in HTTPS mode with internal self-signed certificate."
