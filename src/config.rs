@@ -76,6 +76,7 @@ pub struct RateLimitConfig {
     pub enabled: bool,
     pub requests_per_second: u32,
     pub burst_size: u32,
+    pub max_concurrent_connections: Option<usize>,
 }
 
 impl Default for RateLimitConfig {
@@ -84,6 +85,7 @@ impl Default for RateLimitConfig {
             enabled: true,
             requests_per_second: 1,
             burst_size: 5,
+            max_concurrent_connections: Some(50_000), // Default safe limit for 4GB RAM
         }
     }
 }

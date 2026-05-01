@@ -51,126 +51,16 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
                     Err(_) => continue,
                 }
             }
-            _ => continue, // Ignore Text and other message types
+            _ => continue,
         };
 
-        let content = match sig_msg.content {
-            Some(c) => c,
-            None => continue,
-        };
-
-        match content {
-            Content::Init(init) => {
-                let d_id = init.device_id.clone();
-                let device = match state.db_call(move |db| db.get_device_by_id(&d_id)).await {
-                    Ok(Some(d)) => d,
-                    _ => {
-                        let _ = tx.send(SignalingMessage {
-                            content: Some(Content::ErrorMessage(ErrorMessage {
-                                message: "Device not recognized".to_string(),
-                            }))
-                        }).await;
-                        continue;
-                    }
-                };
-
-                if device.user_id != init.identity_id {
-                    let _ = tx.send(SignalingMessage {
-                        content: Some(Content::ErrorMessage(ErrorMessage {
-                            message: "Identity mismatch".to_string(),
-                        }))
-                    }).await;
-                    continue;
-                }
-
-                let msg_to_sign = format!("WS_INIT:{}:{}:{}", init.device_id, init.identity_id, init.timestamp);
-                let sig_bytes = hex::decode(&init.signature).unwrap_or_default();
-
-                if crate::auth::verify_signature(&msg_to_sign, &device.public_key, &sig_bytes) {
-                    current_device_id = Some(init.device_id.clone());
-                    state.peers.insert(init.device_id.clone(), tx.clone());
-                    tracing::info!("Device {} registered for signaling", init.device_id);
-
-                    let _ = tx.send(SignalingMessage {
-                        content: Some(Content::InitSuccess(InitSuccess {}))
-                    }).await;
-
-                    let state_clone = Arc::clone(&state);
-                    let d_id = init.device_id.clone();
-                    let tx_clone = tx.clone();
-                    tokio::spawn(async move {
-                        let s_c = Arc::clone(&state_clone);
-                        let d_id_c = d_id.clone();
-                        if let Ok(messages) = s_c.db_call(move |db| db.get_and_clear_mailbox(&d_id_c)).await {
-                            for msg in messages {
-                                let _ = tx_clone.send(SignalingMessage {
-                                    content: Some(Content::MailboxPush(MailboxPush {
-                                        payload: msg.payload,
-                                    }))
-                                }).await;
-                            }
-                        }
-                    });
-                } else {
-                    let _ = tx.send(SignalingMessage {
-                        content: Some(Content::ErrorMessage(ErrorMessage {
-                            message: "Invalid signature or device key".to_string(),
-                        }))
-                    }).await;
-                }
-            }
-            Content::Offer(offer) => {
-                if let Some(from_id) = &current_device_id {
-                    let f_id = from_id.clone();
-                    let t_id = offer.target_device_id.clone();
-                    let authorized = state.db_call(move |db| db.is_authorized_to_message(&f_id, &t_id)).await.unwrap_or(false);
-
-                    if authorized {
-                        route_message(&state, &offer.target_device_id, SignalingMessage {
-                            content: Some(Content::Offer(Offer {
-                                target_device_id: offer.target_device_id.clone(),
-                                sdp: offer.sdp,
-                                from_device_id: Some(from_id.clone()),
-                            }))
-                        }).await;
-                    }
-                }
-            }
-            Content::Answer(answer) => {
-                if let Some(from_id) = &current_device_id {
-                    let f_id = from_id.clone();
-                    let t_id = answer.target_device_id.clone();
-                    let authorized = state.db_call(move |db| db.is_authorized_to_message(&f_id, &t_id)).await.unwrap_or(false);
-
-                    if authorized {
-                        route_message(&state, &answer.target_device_id, SignalingMessage {
-                            content: Some(Content::Answer(Answer {
-                                target_device_id: answer.target_device_id.clone(),
-                                sdp: answer.sdp,
-                                from_device_id: Some(from_id.clone()),
-                            }))
-                        }).await;
-                    }
-                }
-            }
-            Content::Candidate(candidate) => {
-                if let Some(from_id) = &current_device_id {
-                    let f_id = from_id.clone();
-                    let t_id = candidate.target_device_id.clone();
-                    let authorized = state.db_call(move |db| db.is_authorized_to_message(&f_id, &t_id)).await.unwrap_or(false);
-
-                    if authorized {
-                        route_message(&state, &candidate.target_device_id, SignalingMessage {
-                            content: Some(Content::Candidate(Candidate {
-                                target_device_id: candidate.target_device_id.clone(),
-                                candidate: candidate.candidate,
-                                from_device_id: Some(from_id.clone()),
-                            }))
-                        }).await;
-                    }
-                }
-            }
-            _ => {}
+        if let Some(content) = sig_msg.content {
+            handle_signaling_message(
+                &state,
+                content,
+                &tx,
+                &mut current_device_id,
+            ).await;
         }
     }
 
@@ -182,6 +72,174 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>) {
     send_task.abort();
 }
 
+#[async_recursion::async_recursion]
+async fn handle_signaling_message(
+    state: &Arc<AppState>,
+    content: Content,
+    tx: &mpsc::Sender<SignalingMessage>,
+    current_device_id: &mut Option<String>,
+) {
+    match content {
+        Content::Init(init) => {
+            // 1. Capacity Check: Prevent memory exhaustion
+            let max_peers = state.config.rate_limit.max_concurrent_connections.unwrap_or(50_000);
+            if state.peers.len() >= max_peers && !state.peers.contains_key(&init.device_id) {
+                let _ = tx.send(SignalingMessage {
+                    content: Some(Content::ErrorMessage(ErrorMessage {
+                        message: "Server at maximum capacity. Please retry later.".to_string(),
+                    }))
+                }).await;
+                return;
+            }
+
+            // 2. Admission Control: Prevent CPU saturation during reconnection spikes
+            let handshake_timeout = std::time::Duration::from_secs(5);
+            let _permit = match tokio::time::timeout(handshake_timeout, state.handshake_semaphore.acquire()).await {
+                Ok(Ok(p)) => p,
+                _ => {
+                    tracing::warn!("Handshake timeout or throttle active for {}", init.device_id);
+                    let _ = tx.send(SignalingMessage {
+                        content: Some(Content::ErrorMessage(ErrorMessage {
+                            message: "Server busy. Please backoff and retry.".to_string(),
+                        }))
+                    }).await;
+                    return;
+                }
+            };
+
+            let d_id = init.device_id.clone();
+            let device = match state.db_call(move |db| db.get_device_by_id(&d_id)).await {
+                Ok(Some(d)) => d,
+                _ => {
+                    let _ = tx.send(SignalingMessage {
+                        content: Some(Content::ErrorMessage(ErrorMessage {
+                            message: "Device not recognized".to_string(),
+                        }))
+                    }).await;
+                    return;
+                }
+            };
+
+            if device.user_id != init.identity_id {
+                let _ = tx.send(SignalingMessage {
+                    content: Some(Content::ErrorMessage(ErrorMessage {
+                        message: "Identity mismatch".to_string(),
+                    }))
+                }).await;
+                return;
+            }
+
+            let msg_to_sign = format!("WS_INIT:{}:{}:{}", init.device_id, init.identity_id, init.timestamp);
+            let sig_bytes = hex::decode(&init.signature).unwrap_or_default();
+            let pub_key_hex = device.public_key.clone();
+
+            // CPU Intensive Signature Verification with timeout
+            let sig_verified = match tokio::time::timeout(handshake_timeout, tokio::task::spawn_blocking(move || {
+                crate::auth::verify_signature(&msg_to_sign, &pub_key_hex, &sig_bytes)
+            })).await {
+                Ok(Ok(v)) => v,
+                _ => false,
+            };
+
+            if sig_verified {
+                *current_device_id = Some(init.device_id.clone());
+                state.peers.insert(init.device_id.clone(), tx.clone());
+                tracing::info!("Device {} registered for signaling", init.device_id);
+
+                let _ = tx.send(SignalingMessage {
+                    content: Some(Content::InitSuccess(InitSuccess {}))
+                }).await;
+
+                let state_clone = Arc::clone(state);
+                let d_id = init.device_id.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    if let Ok(messages) = state_clone.db_call(move |db| db.get_and_clear_mailbox(&d_id)).await {
+                        if !messages.is_empty() {
+                            let batch = messages.into_iter().map(|msg| SignalingMessage {
+                                content: Some(Content::MailboxPush(MailboxPush {
+                                    payload: msg.payload,
+                                }))
+                            }).collect();
+
+                            let _ = tx_clone.send(SignalingMessage {
+                                content: Some(Content::Batch(indidus_proto::signaling::Batch {
+                                    messages: batch,
+                                }))
+                            }).await;
+                        }
+                    }
+                });
+            } else {
+                let _ = tx.send(SignalingMessage {
+                    content: Some(Content::ErrorMessage(ErrorMessage {
+                        message: "Invalid signature or device key".to_string(),
+                    }))
+                }).await;
+            }
+        }
+        Content::Offer(offer) => {
+            if let Some(from_id) = current_device_id {
+                let f_id = from_id.clone();
+                let t_id = offer.target_device_id.clone();
+                let authorized = state.db_call(move |db| db.is_authorized_to_message(&f_id, &t_id)).await.unwrap_or(false);
+
+                if authorized {
+                    route_message(state, &offer.target_device_id, SignalingMessage {
+                        content: Some(Content::Offer(Offer {
+                            target_device_id: offer.target_device_id.clone(),
+                            sdp: offer.sdp,
+                            from_device_id: Some(from_id.clone()),
+                        }))
+                    }).await;
+                }
+            }
+        }
+        Content::Answer(answer) => {
+            if let Some(from_id) = current_device_id {
+                let f_id = from_id.clone();
+                let t_id = answer.target_device_id.clone();
+                let authorized = state.db_call(move |db| db.is_authorized_to_message(&f_id, &t_id)).await.unwrap_or(false);
+
+                if authorized {
+                    route_message(state, &answer.target_device_id, SignalingMessage {
+                        content: Some(Content::Answer(Answer {
+                            target_device_id: answer.target_device_id.clone(),
+                            sdp: answer.sdp,
+                            from_device_id: Some(from_id.clone()),
+                        }))
+                    }).await;
+                }
+            }
+        }
+        Content::Candidate(candidate) => {
+            if let Some(from_id) = current_device_id {
+                let f_id = from_id.clone();
+                let t_id = candidate.target_device_id.clone();
+                let authorized = state.db_call(move |db| db.is_authorized_to_message(&f_id, &t_id)).await.unwrap_or(false);
+
+                if authorized {
+                    route_message(state, &candidate.target_device_id, SignalingMessage {
+                        content: Some(Content::Candidate(Candidate {
+                            target_device_id: candidate.target_device_id.clone(),
+                            candidate: candidate.candidate,
+                            from_device_id: Some(from_id.clone()),
+                        }))
+                    }).await;
+                }
+            }
+        }
+        Content::Batch(batch) => {
+            for msg in batch.messages {
+                if let Some(content) = msg.content {
+                    handle_signaling_message(state, content, tx, current_device_id).await;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 pub async fn route_message(state: &Arc<AppState>, target_id: &str, msg: SignalingMessage) {
     let tx = state.peers.get(target_id).map(|r| r.value().clone());
 
@@ -189,7 +247,6 @@ pub async fn route_message(state: &Arc<AppState>, target_id: &str, msg: Signalin
         let _ = tx.send(msg).await;
     } else {
         tracing::warn!("Target device {} not found for signaling, enqueuing to mailbox", target_id);
-        // Queue in Offline Mailbox
         let mut payload = Vec::new();
         if msg.encode(&mut payload).is_ok() {
             let state_clone = Arc::clone(state);

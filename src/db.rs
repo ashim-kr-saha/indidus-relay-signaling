@@ -28,19 +28,27 @@ pub struct IdentityInfo {
 pub struct Db {
     pool: DbPool,
     identity_cache: Cache<Vec<u8>, Option<IdentityInfo>>,
+    authorization_cache: Cache<(String, String), bool>,
 }
 
 impl Db {
     pub fn open<P: AsRef<Path>>(path: P) -> anyhow::Result<Self> {
         let manager = SqliteConnectionManager::file(path);
-        let pool = Pool::new(manager)?;
+        let pool = Pool::builder()
+            .max_size(50) // High-concurrency support
+            .build(manager)?;
         let identity_cache = Cache::builder()
             .max_capacity(1000)
             .time_to_idle(std::time::Duration::from_secs(300))
             .build();
+        let authorization_cache = Cache::builder()
+            .max_capacity(10000)
+            .time_to_live(std::time::Duration::from_secs(60))
+            .build();
         let db = Self {
             pool,
             identity_cache,
+            authorization_cache,
         };
         db.init_schema()?;
         Ok(db)
@@ -147,6 +155,12 @@ impl Db {
         )?;
 
         info!("Database schema initialized successfully.");
+        Ok(())
+    }
+
+    pub fn checkpoint(&self) -> anyhow::Result<()> {
+        let conn = self.pool.get()?;
+        conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);")?;
         Ok(())
     }
 
@@ -426,6 +440,11 @@ impl Db {
         from_device_id: &str,
         target_device_id: &str,
     ) -> anyhow::Result<bool> {
+        let key = (from_device_id.to_string(), target_device_id.to_string());
+        if let Some(authorized) = self.authorization_cache.get(&key) {
+            return Ok(authorized);
+        }
+
         let conn = self.pool.get()?;
 
         // 1. Get identity IDs for both devices
@@ -461,6 +480,7 @@ impl Db {
 
         // 2. If same identity, allowed (multi-device)
         if from_identity == target_identity {
+            self.authorization_cache.insert(key, true);
             return Ok(true);
         }
 
@@ -479,7 +499,9 @@ impl Db {
             )
             .optional()?;
 
-        Ok(status.is_some_and(|s| s == "confirmed"))
+        let authorized = status == Some("confirmed".to_string());
+        self.authorization_cache.insert(key, authorized);
+        Ok(authorized)
     }
 
     pub fn block_friend(&self, identity_id: &str, blocked_identity_id: &str) -> anyhow::Result<()> {

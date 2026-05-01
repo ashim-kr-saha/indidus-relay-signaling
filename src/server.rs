@@ -20,6 +20,8 @@ pub struct AppState {
     pub peers: DashMap<String, mpsc::Sender<indidus_proto::signaling::SignalingMessage>>,
     pub pairing_sessions: mini_moka::sync::Cache<String, (Vec<u8>, Option<Vec<u8>>)>,
     pub prometheus_handle: PrometheusHandle,
+    /// Limits concurrent cryptographic handshakes to prevent CPU saturation (Thundering Herd)
+    pub handshake_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -35,12 +37,17 @@ impl AppState {
             .time_to_live(std::time::Duration::from_secs(300)) // 5 minute TTL
             .build();
 
+        // Limit concurrent handshakes to 100 on 1 core, or 200 per CPU core on larger servers
+        let max_concurrent_handshakes = 200; // Hard limit for safety on small instances
+        let handshake_semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent_handshakes));
+
         Ok(Self {
             config,
             db,
             peers: DashMap::new(),
             pairing_sessions,
             prometheus_handle,
+            handshake_semaphore,
         })
     }
 
@@ -123,7 +130,7 @@ pub fn create_app(state: Arc<AppState>) -> Router {
 
 pub async fn run(config: Config) -> anyhow::Result<()> {
     let addr = format!("{}:{}", config.server.host, config.server.port);
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
     run_with_listener(config, listener).await
 }
 
@@ -132,7 +139,19 @@ pub async fn run_with_listener(
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
     let state = Arc::new(AppState::new(config)?);
-    let app = create_app(state);
+    let app = create_app(Arc::clone(&state));
+
+    // Background maintenance task (WAL checkpointing)
+    let maintenance_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            if let Err(e) = maintenance_state.db_call(|db| db.checkpoint()).await {
+                tracing::error!("Database maintenance error: {}", e);
+            }
+        }
+    });
 
     tracing::info!("Starting server on {}", listener.local_addr()?);
     axum::serve(
