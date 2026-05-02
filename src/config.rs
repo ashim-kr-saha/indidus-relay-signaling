@@ -94,19 +94,11 @@ impl Default for RateLimitConfig {
 /// When `mtls_required` is true, the signaling server expects the reverse proxy
 /// (Caddy) to verify client certificates and forward the result via headers.
 /// When false, PoW-only mode is used (for self-hosters).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GateConfig {
     /// When true, registration requires a valid client certificate
     /// verified by the reverse proxy (X-Client-Cert-Verified header).
     pub mtls_required: bool,
-}
-
-impl Default for GateConfig {
-    fn default() -> Self {
-        Self {
-            mtls_required: false,
-        }
-    }
 }
 
 impl Config {

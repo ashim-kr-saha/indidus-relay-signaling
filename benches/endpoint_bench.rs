@@ -99,7 +99,7 @@ fn bench_signaling_endpoints(c: &mut Criterion) {
             let req = RegisterIdentityRequest {
                 username: username.clone(),
                 root_public_key: pk_hex,
-                pow_nonce: pow_nonce,
+                pow_nonce,
             };
             let mut buf = Vec::new();
             req.encode(&mut buf).unwrap();

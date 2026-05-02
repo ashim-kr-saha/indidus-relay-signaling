@@ -24,6 +24,7 @@ impl TestServer {
     }
 
     /// Spawn a test server with `gate.mtls_required = true`.
+    #[allow(dead_code)]
     pub async fn spawn_with_gate() -> Self {
         let temp_db = NamedTempFile::new().unwrap();
         let db_path = temp_db.path().to_str().unwrap().to_string();
@@ -39,6 +40,7 @@ impl TestServer {
     }
 
     /// Spawn a test server with `registration_difficulty = 0` (PoW disabled).
+    #[allow(dead_code)]
     pub async fn spawn_with_no_pow() -> Self {
         let temp_db = NamedTempFile::new().unwrap();
         let db_path = temp_db.path().to_str().unwrap().to_string();
