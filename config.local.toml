@@ -1,0 +1,26 @@
+[server]
+host = "127.0.0.1"
+port = 8080
+
+[database]
+path = "relay_dev.db"
+
+[auth]
+registration_difficulty = 10
+
+[gate]
+mtls_required = false
+
+[turn]
+secret = "turn_secret_change_me"
+realm = "indidus"
+
+[relay]
+storage_path = "./data/shares"
+max_share_size = 10485760
+default_ttl = 3600
+
+[rate_limit]
+enabled = false
+requests_per_second = 100
+burst_size = 200

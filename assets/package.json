@@ -1,0 +1,20 @@
+{
+  "name": "indidus-wasm-share-client",
+  "type": "module",
+  "collaborators": [
+    "Indidus Team"
+  ],
+  "description": "WebAssembly client for decrypting and downloading Indidus shares",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "files": [
+    "indidus_wasm_share_client_bg.wasm",
+    "indidus_wasm_share_client.js",
+    "indidus_wasm_share_client.d.ts"
+  ],
+  "main": "indidus_wasm_share_client.js",
+  "types": "indidus_wasm_share_client.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

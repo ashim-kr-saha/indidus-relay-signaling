@@ -1,2 +1,7 @@
 signaling.db
 signaling_v4.db
+relay_dev.db
+relay_dev.db-shm
+relay_dev.db-wal
+relay.log
+relay.pid
