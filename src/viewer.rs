@@ -23,12 +23,12 @@ async fn serve_asset(path: String) -> impl IntoResponse {
     match Assets::get(&path) {
         Some(content) => {
             let mime = mime_guess::from_path(&path).first_or_octet_stream();
-            let mut builder = Response::builder()
-                .header(header::CONTENT_TYPE, mime.as_ref());
-            
+            let mut builder = Response::builder().header(header::CONTENT_TYPE, mime.as_ref());
+
             // Add long-term caching for static assets in /pkg/ (WASM, JS, etc)
             if path.starts_with("pkg/") {
-                builder = builder.header(header::CACHE_CONTROL, "public, max-age=31536000, immutable");
+                builder =
+                    builder.header(header::CACHE_CONTROL, "public, max-age=31536000, immutable");
             } else {
                 // Short cache for HTML/index
                 builder = builder.header(header::CACHE_CONTROL, "no-cache");

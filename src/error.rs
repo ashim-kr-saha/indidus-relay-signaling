@@ -3,8 +3,8 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use thiserror::Error;
 use indidus_proto::signaling::ErrorResponse;
+use thiserror::Error;
 
 pub type Result<T> = std::result::Result<T, Error>;
 

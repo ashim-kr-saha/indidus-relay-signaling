@@ -1,4 +1,7 @@
-use crate::models::user::{AuditLogEntry, DeviceResponse, FriendResponse, MailboxMessage, VaultInviteResponse, VaultMemberResponse};
+use crate::models::user::{
+    AuditLogEntry, DeviceResponse, FriendResponse, MailboxMessage, VaultInviteResponse,
+    VaultMemberResponse,
+};
 use chrono::{DateTime, Utc};
 use mini_moka::sync::Cache;
 use r2d2::Pool;
@@ -381,10 +384,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_friends(
-        &self,
-        identity_id: &str,
-    ) -> anyhow::Result<Vec<FriendResponse>> {
+    pub fn get_friends(&self, identity_id: &str) -> anyhow::Result<Vec<FriendResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare("
             SELECT i.username, f.status, 
@@ -551,10 +551,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_and_clear_mailbox(
-        &self,
-        device_id: &str,
-    ) -> anyhow::Result<Vec<MailboxMessage>> {
+    pub fn get_and_clear_mailbox(&self, device_id: &str) -> anyhow::Result<Vec<MailboxMessage>> {
         let mut conn = self.pool.get()?;
         let tx = conn.transaction()?;
 
@@ -677,10 +674,7 @@ impl Db {
         Ok(())
     }
 
-    pub fn get_vault_members(
-        &self,
-        vault_id: &str,
-    ) -> anyhow::Result<Vec<VaultMemberResponse>> {
+    pub fn get_vault_members(&self, vault_id: &str) -> anyhow::Result<Vec<VaultMemberResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
             "

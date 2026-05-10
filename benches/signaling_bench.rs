@@ -1,13 +1,9 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use indidus_relay_signaling::{
-    Config,
-    server::AppState,
-    signaling::route_message,
-};
+use indidus_proto::signaling::{Offer, SignalingMessage, signaling_message::Content};
+use indidus_relay_signaling::{Config, server::AppState, signaling::route_message};
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc;
-use indidus_proto::signaling::{SignalingMessage, signaling_message::Content, Offer};
 
 fn bench_signaling_routing(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();

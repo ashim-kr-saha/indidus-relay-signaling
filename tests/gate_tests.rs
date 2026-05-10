@@ -1,11 +1,18 @@
 mod common;
 use common::{TestServer, solve_pow};
 use ed25519_dalek::SigningKey;
-use reqwest::{Client, StatusCode};
 use indidus_proto::signaling::RegisterIdentityRequest;
 use prost::Message;
+use reqwest::{Client, StatusCode};
 
-async fn register_proto(client: &Client, url: &str, username: &str, pk_hex: &str, pow: u64, gate_header: Option<&str>) -> reqwest::Response {
+async fn register_proto(
+    client: &Client,
+    url: &str,
+    username: &str,
+    pk_hex: &str,
+    pow: u64,
+    gate_header: Option<&str>,
+) -> reqwest::Response {
     let req = RegisterIdentityRequest {
         username: username.to_string(),
         root_public_key: pk_hex.to_string(),
@@ -14,7 +21,9 @@ async fn register_proto(client: &Client, url: &str, username: &str, pk_hex: &str
     let mut buf = Vec::new();
     req.encode(&mut buf).unwrap();
 
-    let mut builder = client.post(url).header("Content-Type", "application/x-protobuf");
+    let mut builder = client
+        .post(url)
+        .header("Content-Type", "application/x-protobuf");
     if let Some(h) = gate_header {
         builder = builder.header("X-Client-Cert-Verified", h);
     }
@@ -35,7 +44,15 @@ async fn test_registration_gate_disabled() {
 
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
 
-    let resp = register_proto(&client, &server.url("/register"), username, &public_key_hex, pow_nonce, None).await;
+    let resp = register_proto(
+        &client,
+        &server.url("/register"),
+        username,
+        &public_key_hex,
+        pow_nonce,
+        None,
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
 
@@ -53,7 +70,15 @@ async fn test_registration_gate_enabled_no_cert_rejected() {
 
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
 
-    let resp = register_proto(&client, &server.url("/register"), username, &public_key_hex, pow_nonce, None).await;
+    let resp = register_proto(
+        &client,
+        &server.url("/register"),
+        username,
+        &public_key_hex,
+        pow_nonce,
+        None,
+    )
+    .await;
     // Should be rejected — no client cert header
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
@@ -72,7 +97,15 @@ async fn test_registration_gate_enabled_with_cert_succeeds() {
 
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
 
-    let resp = register_proto(&client, &server.url("/register"), username, &public_key_hex, pow_nonce, Some("true")).await;
+    let resp = register_proto(
+        &client,
+        &server.url("/register"),
+        username,
+        &public_key_hex,
+        pow_nonce,
+        Some("true"),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::CREATED);
 }
 
@@ -91,7 +124,15 @@ async fn test_registration_gate_enabled_spoofed_header_rejected() {
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
 
     // Try with "True" (wrong case)
-    let resp = register_proto(&client, &server.url("/register"), username, &public_key_hex, pow_nonce, Some("True")).await;
+    let resp = register_proto(
+        &client,
+        &server.url("/register"),
+        username,
+        &public_key_hex,
+        pow_nonce,
+        Some("True"),
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
 }
 
@@ -108,6 +149,14 @@ async fn test_registration_pow_disabled() {
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
     // Send pow_nonce = 0 (wrong nonce) — should still succeed because difficulty = 0
-    let resp = register_proto(&client, &server.url("/register"), username, &public_key_hex, 0, None).await;
+    let resp = register_proto(
+        &client,
+        &server.url("/register"),
+        username,
+        &public_key_hex,
+        0,
+        None,
+    )
+    .await;
     assert_eq!(resp.status(), StatusCode::CREATED);
 }

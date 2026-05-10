@@ -1,4 +1,4 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
     extract::State,
     http::{HeaderMap, Method, Uri},
@@ -7,9 +7,9 @@ use axum::{
 use base64::prelude::*;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
+use indidus_proto::signaling::TurnResponse;
 use sha1::Sha1;
 use std::sync::Arc;
-use indidus_proto::signaling::TurnResponse;
 
 type HmacSha1 = Hmac<Sha1>;
 

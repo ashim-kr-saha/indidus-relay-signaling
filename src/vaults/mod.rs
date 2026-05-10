@@ -1,16 +1,16 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use std::sync::Arc;
 use indidus_proto::signaling::{
-    VaultInviteRequest, VaultInvitesList, VaultInviteResponse, 
-    VaultMembersList, VaultMemberResponse
+    VaultInviteRequest, VaultInviteResponse, VaultInvitesList, VaultMemberResponse,
+    VaultMembersList,
 };
 use prost::Message;
+use std::sync::Arc;
 
 pub async fn invite_to_vault(
     State(state): State<Arc<AppState>>,
@@ -51,14 +51,17 @@ pub async fn list_vault_invites(
         .db_call(move |db| db.get_pending_vault_invites(&id))
         .await?;
 
-    let entries = invites.into_iter().map(|i| VaultInviteResponse {
-        id: i.id,
-        vault_id: i.vault_id,
-        inviter_username: i.inviter_username,
-        status: i.status,
-        created_at: i.created_at,
-        role: i.role,
-    }).collect();
+    let entries = invites
+        .into_iter()
+        .map(|i| VaultInviteResponse {
+            id: i.id,
+            vault_id: i.vault_id,
+            inviter_username: i.inviter_username,
+            status: i.status,
+            created_at: i.created_at,
+            role: i.role,
+        })
+        .collect();
 
     Ok(Protobuf(VaultInvitesList { invites: entries }))
 }
@@ -97,12 +100,15 @@ pub async fn list_vault_members(
     let v_id = vault_id.clone();
     let members = state.db_call(move |db| db.get_vault_members(&v_id)).await?;
 
-    let entries = members.into_iter().map(|m| VaultMemberResponse {
-        user_id: m.user_id,
-        username: m.username,
-        role: m.role,
-        joined_at: m.joined_at,
-    }).collect();
+    let entries = members
+        .into_iter()
+        .map(|m| VaultMemberResponse {
+            user_id: m.user_id,
+            username: m.username,
+            role: m.role,
+            joined_at: m.joined_at,
+        })
+        .collect();
 
     Ok(Protobuf(VaultMembersList { members: entries }))
 }

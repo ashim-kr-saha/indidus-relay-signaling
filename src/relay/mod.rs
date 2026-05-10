@@ -1,4 +1,4 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
     body::Bytes,
     extract::{Path, State},

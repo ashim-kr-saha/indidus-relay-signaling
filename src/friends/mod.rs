@@ -1,13 +1,13 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
     body::Bytes,
     extract::{Path, State},
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use std::sync::Arc;
-use indidus_proto::signaling::{FriendRequest, FriendsList, FriendResponse};
+use indidus_proto::signaling::{FriendRequest, FriendResponse, FriendsList};
 use prost::Message;
+use std::sync::Arc;
 
 pub async fn send_friend_request(
     State(state): State<Arc<AppState>>,
@@ -56,11 +56,14 @@ pub async fn list_friends(
     let id = identity_id.clone();
     let friends = state.db_call(move |db| db.get_friends(&id)).await?;
 
-    let entries = friends.into_iter().map(|f| FriendResponse {
-        username: f.username,
-        status: f.status,
-        last_active: f.last_active,
-    }).collect();
+    let entries = friends
+        .into_iter()
+        .map(|f| FriendResponse {
+            username: f.username,
+            status: f.status,
+            last_active: f.last_active,
+        })
+        .collect();
 
     Ok(Protobuf(FriendsList { friends: entries }))
 }

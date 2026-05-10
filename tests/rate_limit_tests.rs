@@ -1,8 +1,8 @@
 mod common;
 use common::{TestServer, solve_pow};
-use reqwest::{Client, StatusCode};
 use indidus_proto::signaling::RegisterIdentityRequest;
 use prost::Message;
+use reqwest::{Client, StatusCode};
 
 #[tokio::test]
 async fn test_registration_rate_limiting() {

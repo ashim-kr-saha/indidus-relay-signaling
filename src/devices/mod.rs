@@ -1,13 +1,15 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
-    extract::{Path, State},
-    http::{StatusCode, HeaderMap, Method, Uri},
-    response::IntoResponse,
     body::Bytes,
+    extract::{Path, State},
+    http::{HeaderMap, Method, StatusCode, Uri},
+    response::IntoResponse,
 };
-use std::sync::Arc;
-use indidus_proto::signaling::{RegisterDeviceRequest, RegisterDeviceResponse, DeviceListResponse, DeviceInfo};
+use indidus_proto::signaling::{
+    DeviceInfo, DeviceListResponse, RegisterDeviceRequest, RegisterDeviceResponse,
+};
 use prost::Message;
+use std::sync::Arc;
 
 pub async fn register_device(
     State(state): State<Arc<AppState>>,
@@ -16,10 +18,12 @@ pub async fn register_device(
     uri: Uri,
     body: Bytes,
 ) -> Result<impl IntoResponse> {
-    let payload = RegisterDeviceRequest::decode(body.clone()).map_err(|e| Error::BadRequest(e.to_string()))?;
+    let payload = RegisterDeviceRequest::decode(body.clone())
+        .map_err(|e| Error::BadRequest(e.to_string()))?;
 
     let identity_id =
-        crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body).await?;
+        crate::auth::authenticate_identity(&state, &headers, method.as_str(), uri.path(), &body)
+            .await?;
 
     if identity_id != payload.identity_id {
         return Err(Error::Auth("Identity mismatch".to_string()));
@@ -54,15 +58,20 @@ pub async fn list_devices(
         .db_call(move |db| db.get_devices_by_identity(&id))
         .await?;
 
-    let device_infos = devices.into_iter().map(|d| DeviceInfo {
-        id: d.id,
-        public_key: d.public_key,
-        name: d.name,
-        last_active: d.last_active,
-        protocol_version: d.protocol_version,
-    }).collect();
+    let device_infos = devices
+        .into_iter()
+        .map(|d| DeviceInfo {
+            id: d.id,
+            public_key: d.public_key,
+            name: d.name,
+            last_active: d.last_active,
+            protocol_version: d.protocol_version,
+        })
+        .collect();
 
-    let response = DeviceListResponse { devices: device_infos };
+    let response = DeviceListResponse {
+        devices: device_infos,
+    };
     Ok(Protobuf(response))
 }
 

@@ -1,13 +1,18 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
+use indidus_proto::relay::UploadResponse;
+use indidus_proto::signaling::RegisterIdentityRequest;
+use prost::Message;
 use reqwest::{Client, StatusCode};
 use std::time::{SystemTime, UNIX_EPOCH};
-use indidus_proto::signaling::RegisterIdentityRequest;
-use indidus_proto::relay::UploadResponse;
-use prost::Message;
 
-async fn register_user(client: &Client, url: &str, username: &str, difficulty: u32) -> (String, SigningKey) {
+async fn register_user(
+    client: &Client,
+    url: &str,
+    username: &str,
+    difficulty: u32,
+) -> (String, SigningKey) {
     let mut rng = rand::thread_rng();
     let sk = SigningKey::generate(&mut rng);
     let pk_hex = hex::encode(sk.verifying_key().as_bytes());
@@ -21,10 +26,13 @@ async fn register_user(client: &Client, url: &str, username: &str, difficulty: u
     let mut buf = Vec::new();
     req.encode(&mut buf).unwrap();
 
-    client.post(url)
+    client
+        .post(url)
         .header("Content-Type", "application/x-protobuf")
         .body(buf)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     (pk_hex, sk)
 }
 
@@ -35,7 +43,13 @@ async fn test_relay_blob_storage() {
     let username = "alice";
 
     // 1. Setup Identity
-    let (public_key_hex, signing_key) = register_user(&client, &server.url("/register"), username, server.config.auth.registration_difficulty).await;
+    let (public_key_hex, signing_key) = register_user(
+        &client,
+        &server.url("/register"),
+        username,
+        server.config.auth.registration_difficulty,
+    )
+    .await;
 
     // 2. Upload blob
     let payload = vec![1, 2, 3, 4, 5];
@@ -103,7 +117,13 @@ async fn test_relay_revocation() {
     let username = "bob";
 
     // Setup user
-    let (public_key_hex, signing_key) = register_user(&client, &server.url("/register"), username, server.config.auth.registration_difficulty).await;
+    let (public_key_hex, signing_key) = register_user(
+        &client,
+        &server.url("/register"),
+        username,
+        server.config.auth.registration_difficulty,
+    )
+    .await;
 
     // Upload blob
     let payload = vec![1, 2, 3];

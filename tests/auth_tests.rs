@@ -1,10 +1,10 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
-use reqwest::{Client, StatusCode};
-use std::time::{SystemTime, UNIX_EPOCH};
 use indidus_proto::signaling::RegisterIdentityRequest;
 use prost::Message;
+use reqwest::{Client, StatusCode};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[tokio::test]
 async fn test_registration_and_device_management() {

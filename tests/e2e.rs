@@ -1,11 +1,11 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
+use indidus_proto::relay::UploadResponse;
+use indidus_proto::signaling::RegisterIdentityRequest;
+use prost::Message;
 use reqwest::Client;
 use std::time::{SystemTime, UNIX_EPOCH};
-use indidus_proto::signaling::RegisterIdentityRequest;
-use indidus_proto::relay::UploadResponse;
-use prost::Message;
 
 #[tokio::test]
 async fn test_full_lifecycle_v4() {
@@ -21,7 +21,7 @@ async fn test_full_lifecycle_v4() {
 
     // 2. Register
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
-    
+
     let req = RegisterIdentityRequest {
         username: username.to_string(),
         root_public_key: public_key_hex.clone(),

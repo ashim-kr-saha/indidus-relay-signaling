@@ -1,15 +1,14 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
+use indidus_proto::signaling::{
+    InitiatePairingRequest, InitiatePairingResponse, PairingPollResponse, RespondPairingRequest,
+    RespondPairingResponse,
+};
 use std::sync::Arc;
 use uuid::Uuid;
-use indidus_proto::signaling::{
-    InitiatePairingRequest, InitiatePairingResponse, 
-    RespondPairingRequest, RespondPairingResponse,
-    PairingPollResponse
-};
 
 pub async fn initiate_pairing(
     State(state): State<Arc<AppState>>,
@@ -45,7 +44,9 @@ pub async fn poll_pairing(
 ) -> Result<impl IntoResponse> {
     if let Some(session) = state.pairing_sessions.get(&session_id) {
         if let Some(msg_b) = &session.1 {
-            Ok(Protobuf(PairingPollResponse { message: msg_b.clone() }))
+            Ok(Protobuf(PairingPollResponse {
+                message: msg_b.clone(),
+            }))
         } else {
             Err(Error::BadRequest("Pending response".to_string()))
         }

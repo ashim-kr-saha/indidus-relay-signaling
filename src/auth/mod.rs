@@ -1,14 +1,14 @@
-use crate::{Error, Result, server::AppState, proto::Protobuf};
+use crate::{Error, Result, proto::Protobuf, server::AppState};
 use axum::{
     extract::State,
-    http::{HeaderMap, StatusCode, Method, Uri},
+    http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
 use chrono::Utc;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use indidus_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use indidus_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
 
 pub async fn register_identity(
     State(state): State<Arc<AppState>>,

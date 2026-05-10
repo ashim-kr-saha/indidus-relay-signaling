@@ -2,16 +2,14 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use futures::{SinkExt, StreamExt};
+use indidus_proto::signaling::{
+    DeviceListResponse, Init, RegisterIdentityRequest, RegisterIdentityResponse, SignalingMessage,
+    signaling_message::Content,
+};
+use prost::Message as _;
 use reqwest::{Client, StatusCode};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio_tungstenite::{connect_async, tungstenite::protocol::Message};
-use indidus_proto::signaling::{
-    RegisterIdentityRequest, RegisterIdentityResponse,
-    SignalingMessage, 
-    signaling_message::Content,
-    Init, DeviceListResponse
-};
-use prost::Message as _;
 
 #[tokio::test]
 async fn test_mailbox_and_signaling() {
@@ -22,13 +20,15 @@ async fn test_mailbox_and_signaling() {
     let alice_key = SigningKey::generate(&mut rand::thread_rng());
     let alice_pk_hex = hex::encode(alice_key.verifying_key().as_bytes());
     let alice_pow = solve_pow("alice", server.config.auth.registration_difficulty);
-    
+
     let mut alice_reg_buf = Vec::new();
     RegisterIdentityRequest {
         username: "alice".to_string(),
         root_public_key: alice_pk_hex.clone(),
         pow_nonce: alice_pow,
-    }.encode(&mut alice_reg_buf).unwrap();
+    }
+    .encode(&mut alice_reg_buf)
+    .unwrap();
 
     let resp = client
         .post(server.url("/register"))
@@ -43,13 +43,15 @@ async fn test_mailbox_and_signaling() {
     let bob_key = SigningKey::generate(&mut rand::thread_rng());
     let bob_pk_hex = hex::encode(bob_key.verifying_key().as_bytes());
     let bob_pow = solve_pow("bob", server.config.auth.registration_difficulty);
-    
+
     let mut bob_reg_buf = Vec::new();
     RegisterIdentityRequest {
         username: "bob".to_string(),
         root_public_key: bob_pk_hex.clone(),
         pow_nonce: bob_pow,
-    }.encode(&mut bob_reg_buf).unwrap();
+    }
+    .encode(&mut bob_reg_buf)
+    .unwrap();
 
     let resp = client
         .post(server.url("/register"))
@@ -59,11 +61,11 @@ async fn test_mailbox_and_signaling() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    
+
     let bytes = resp.bytes().await.unwrap();
     let bob_reg_res = RegisterIdentityResponse::decode(bytes).unwrap();
     let bob_identity_id = bob_reg_res.id;
-    
+
     // Fetch device ID for Bob
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -81,7 +83,7 @@ async fn test_mailbox_and_signaling() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    
+
     let bytes = resp.bytes().await.unwrap();
     let bob_devices = DeviceListResponse::decode(bytes).unwrap();
     let bob_device_id = bob_devices.devices[0].id.clone();
@@ -95,7 +97,10 @@ async fn test_mailbox_and_signaling() {
         .as_secs();
 
     use ed25519_dalek::Signer;
-    let msg_to_sign = format!("WS_INIT:{}:{}:{}", bob_device_id, bob_identity_id, timestamp);
+    let msg_to_sign = format!(
+        "WS_INIT:{}:{}:{}",
+        bob_device_id, bob_identity_id, timestamp
+    );
     let signature = bob_key.sign(msg_to_sign.as_bytes());
     let sig_hex = hex::encode(signature.to_bytes());
 
@@ -105,7 +110,7 @@ async fn test_mailbox_and_signaling() {
             device_id: bob_device_id,
             timestamp,
             signature: sig_hex,
-        }))
+        })),
     };
     let mut buf = Vec::new();
     init_msg.encode(&mut buf).unwrap();
@@ -123,7 +128,7 @@ async fn test_mailbox_and_signaling() {
         Message::Binary(bin) => {
             let res = SignalingMessage::decode(&bin[..]).unwrap();
             match res.content {
-                Some(Content::InitSuccess(_)) => {},
+                Some(Content::InitSuccess(_)) => {}
                 _ => panic!("Expected InitSuccess, got {:?}", res.content),
             }
         }

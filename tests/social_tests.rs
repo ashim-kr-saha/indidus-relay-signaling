@@ -1,12 +1,17 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
+use indidus_proto::signaling::{FriendRequest, FriendsList, RegisterIdentityRequest};
+use prost::Message;
 use reqwest::{Client, StatusCode};
 use std::time::{SystemTime, UNIX_EPOCH};
-use indidus_proto::signaling::{RegisterIdentityRequest, FriendRequest, FriendsList};
-use prost::Message;
 
-async fn register_user(client: &Client, url: &str, username: &str, difficulty: u32) -> (String, SigningKey) {
+async fn register_user(
+    client: &Client,
+    url: &str,
+    username: &str,
+    difficulty: u32,
+) -> (String, SigningKey) {
     let mut rng = rand::thread_rng();
     let sk = SigningKey::generate(&mut rng);
     let pk_hex = hex::encode(sk.verifying_key().as_bytes());
@@ -20,10 +25,13 @@ async fn register_user(client: &Client, url: &str, username: &str, difficulty: u
     let mut buf = Vec::new();
     req.encode(&mut buf).unwrap();
 
-    client.post(url)
+    client
+        .post(url)
         .header("Content-Type", "application/x-protobuf")
         .body(buf)
-        .send().await.unwrap();
+        .send()
+        .await
+        .unwrap();
     (pk_hex, sk)
 }
 
@@ -33,28 +41,36 @@ async fn test_friend_request_lifecycle() {
     let client = Client::new();
 
     // 1. Setup Alice
-    let (alice_pk_hex, alice_key) = register_user(&client, &server.url("/register"), "alice", server.config.auth.registration_difficulty).await;
+    let (alice_pk_hex, alice_key) = register_user(
+        &client,
+        &server.url("/register"),
+        "alice",
+        server.config.auth.registration_difficulty,
+    )
+    .await;
 
     // 2. Setup Bob
-    let (bob_pk_hex, bob_key) = register_user(&client, &server.url("/register"), "bob", server.config.auth.registration_difficulty).await;
+    let (bob_pk_hex, bob_key) = register_user(
+        &client,
+        &server.url("/register"),
+        "bob",
+        server.config.auth.registration_difficulty,
+    )
+    .await;
 
     // 3. Alice sends friend request to Bob
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs();
-    
-    let freq = FriendRequest { target_username: "bob".to_string() };
+
+    let freq = FriendRequest {
+        target_username: "bob".to_string(),
+    };
     let mut fbuf = Vec::new();
     freq.encode(&mut fbuf).unwrap();
 
-    let signature = generate_signature(
-        &alice_key.to_bytes(),
-        "POST",
-        "/friends",
-        timestamp,
-        &fbuf,
-    );
+    let signature = generate_signature(&alice_key.to_bytes(), "POST", "/friends", timestamp, &fbuf);
 
     let resp = client
         .post(server.url("/friends"))
@@ -106,11 +122,12 @@ async fn test_friend_request_lifecycle() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    
+
     let bytes = resp.bytes().await.unwrap();
     let friends = FriendsList::decode(bytes).unwrap();
     assert!(
-        friends.friends
+        friends
+            .friends
             .iter()
             .any(|f| f.username == "bob" && f.status == "confirmed")
     );
@@ -150,7 +167,7 @@ async fn test_friend_request_lifecycle() {
         .send()
         .await
         .unwrap();
-    
+
     let bytes = resp.bytes().await.unwrap();
     let friends = FriendsList::decode(bytes).unwrap();
     assert!(!friends.friends.iter().any(|f| f.username == "bob"));

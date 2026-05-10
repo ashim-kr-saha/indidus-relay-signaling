@@ -1,11 +1,11 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
+use indidus_proto::relay::UploadResponse;
+use indidus_proto::signaling::{ErrorResponse, RegisterIdentityRequest};
+use prost::Message;
 use reqwest::{Client, StatusCode};
 use std::time::{SystemTime, UNIX_EPOCH};
-use indidus_proto::signaling::{RegisterIdentityRequest, ErrorResponse};
-use indidus_proto::relay::UploadResponse;
-use prost::Message;
 
 #[tokio::test]
 async fn test_invalid_pow_rejection() {
@@ -53,7 +53,7 @@ async fn test_expired_share_retrieval() {
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
 
     let pow_nonce = solve_pow(username, server.config.auth.registration_difficulty);
-    
+
     let req = RegisterIdentityRequest {
         username: username.to_string(),
         root_public_key: public_key_hex.clone(),
