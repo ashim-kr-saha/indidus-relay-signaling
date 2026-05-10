@@ -30,8 +30,9 @@ pub async fn register_device(
 
     let id = identity_id.clone();
     let name = payload.name.clone();
+    let version = payload.protocol_version;
     let device_id = state
-        .db_call(move |db| db.create_device(&id, &pk_bytes, name.as_deref()))
+        .db_call(move |db| db.create_device(&id, &pk_bytes, name.as_deref(), version))
         .await?;
 
     let response = RegisterDeviceResponse { id: device_id };
@@ -58,6 +59,7 @@ pub async fn list_devices(
         public_key: d.public_key,
         name: d.name,
         last_active: d.last_active,
+        protocol_version: d.protocol_version,
     }).collect();
 
     let response = DeviceListResponse { devices: device_infos };

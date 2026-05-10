@@ -85,6 +85,7 @@ impl Db {
                 public_key BLOB NOT NULL,
                 name TEXT,
                 last_active DATETIME DEFAULT CURRENT_TIMESTAMP,
+                protocol_version INTEGER DEFAULT 1,
                 FOREIGN KEY(identity_id) REFERENCES identities(id)
             );
 
@@ -182,7 +183,7 @@ impl Db {
 
         let device_id = uuid::Uuid::new_v4().to_string();
         tx.execute(
-            "INSERT INTO devices (id, identity_id, public_key, name) VALUES (?1, ?2, ?3, 'Primary Device')",
+            "INSERT INTO devices (id, identity_id, public_key, name, protocol_version) VALUES (?1, ?2, ?3, 'Primary Device', 2)",
             (&device_id, &identity_id, root_public_key),
         )?;
 
@@ -226,12 +227,13 @@ impl Db {
         identity_id: &str,
         public_key: &[u8],
         name: Option<&str>,
+        protocol_version: u32,
     ) -> anyhow::Result<String> {
         let conn = self.pool.get()?;
         let id = uuid::Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO devices (id, identity_id, public_key, name) VALUES (?1, ?2, ?3, ?4)",
-            (&id, identity_id, public_key, name),
+            "INSERT INTO devices (id, identity_id, public_key, name, protocol_version) VALUES (?1, ?2, ?3, ?4, ?5)",
+            (&id, identity_id, public_key, name, protocol_version),
         )?;
         self.identity_cache.invalidate(&public_key.to_vec());
         Ok(id)
@@ -243,7 +245,7 @@ impl Db {
     ) -> anyhow::Result<Vec<DeviceResponse>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, public_key, name, last_active FROM devices WHERE identity_id = ?1",
+            "SELECT id, public_key, name, last_active, protocol_version FROM devices WHERE identity_id = ?1",
         )?;
         let rows = stmt.query_map([identity_id], |row| {
             let public_key: Vec<u8> = row.get(1)?;
@@ -252,6 +254,7 @@ impl Db {
                 public_key: hex::encode(public_key),
                 name: row.get(2)?,
                 last_active: row.get(3)?,
+                protocol_version: row.get(4)?,
             })
         })?;
 
@@ -268,7 +271,7 @@ impl Db {
     ) -> anyhow::Result<Option<crate::models::user::Device>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare(
-            "SELECT id, identity_id, public_key, name, last_active FROM devices WHERE id = ?1",
+            "SELECT id, identity_id, public_key, name, last_active, protocol_version FROM devices WHERE id = ?1",
         )?;
         let mut rows = stmt.query([device_id])?;
         if let Some(row) = rows.next()? {
@@ -278,6 +281,7 @@ impl Db {
                 public_key: row.get(2)?,
                 name: row.get(3)?,
                 last_active: row.get(4)?,
+                protocol_version: row.get(5)?,
             }))
         } else {
             Ok(None)

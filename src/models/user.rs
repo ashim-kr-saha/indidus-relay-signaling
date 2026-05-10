@@ -25,6 +25,7 @@ pub struct Device {
     pub public_key: Vec<u8>,
     pub name: Option<String>,
     pub last_active: DateTime<Utc>,
+    pub protocol_version: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,6 +34,7 @@ pub struct DeviceResponse {
     pub public_key: String, // hex
     pub name: Option<String>,
     pub last_active: String,
+    pub protocol_version: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
