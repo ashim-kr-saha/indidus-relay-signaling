@@ -190,9 +190,9 @@ async fn handle_signaling_message(
 
                         let _ = tx_clone
                             .send(SignalingMessage {
-                                content: Some(Content::Batch(indidus_relay_proto::signaling::Batch {
-                                    messages: batch,
-                                })),
+                                content: Some(Content::Batch(
+                                    indidus_relay_proto::signaling::Batch { messages: batch },
+                                )),
                             })
                             .await;
                     }
