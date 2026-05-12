@@ -1,6 +1,6 @@
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use ed25519_dalek::{Signer, SigningKey};
-use indidus_proto::signaling::RegisterIdentityRequest;
+use indidus_relay_proto::signaling::RegisterIdentityRequest;
 use indidus_relay_signaling::{Config, server::AppState};
 use prost::Message;
 use rand::{Rng, thread_rng};

@@ -7,7 +7,7 @@ use axum::{
 use base64::prelude::*;
 use chrono::Utc;
 use hmac::{Hmac, KeyInit, Mac};
-use indidus_proto::signaling::TurnResponse;
+use indidus_relay_proto::signaling::TurnResponse;
 use sha1::Sha1;
 use std::sync::Arc;
 

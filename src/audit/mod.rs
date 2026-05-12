@@ -4,7 +4,7 @@ use axum::{
     http::{HeaderMap, Method, Uri},
     response::IntoResponse,
 };
-use indidus_proto::signaling::{AuditLog, AuditLogsList};
+use indidus_relay_proto::signaling::{AuditLog, AuditLogsList};
 use std::sync::Arc;
 
 pub async fn get_audit_logs(

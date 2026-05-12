@@ -1,8 +1,8 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
-use indidus_proto::relay::UploadResponse;
-use indidus_proto::signaling::{ErrorResponse, RegisterIdentityRequest};
+use indidus_relay_proto::relay::UploadResponse;
+use indidus_relay_proto::signaling::{ErrorResponse, RegisterIdentityRequest};
 use prost::Message;
 use reqwest::{Client, StatusCode};
 use std::time::{SystemTime, UNIX_EPOCH};

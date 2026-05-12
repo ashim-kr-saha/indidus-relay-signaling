@@ -1,0 +1,189 @@
+syntax = "proto3";
+
+package indidus.signaling;
+
+message SignalingMessage {
+    oneof content {
+        Init init = 1;
+        InitSuccess init_success = 2;
+        Offer offer = 3;
+        Answer answer = 4;
+        Candidate candidate = 5;
+        MailboxPush mailbox_push = 6;
+        ErrorMessage error_message = 7;
+        Batch batch = 8;
+    }
+}
+
+message Batch {
+    repeated SignalingMessage messages = 1;
+}
+
+message Init {
+    string device_id = 1;
+    string identity_id = 2;
+    uint64 timestamp = 3;
+    string signature = 4;
+}
+
+message InitSuccess {}
+
+message Offer {
+    string target_device_id = 1;
+    string sdp = 2;
+    optional string from_device_id = 3;
+}
+
+message Answer {
+    string target_device_id = 1;
+    string sdp = 2;
+    optional string from_device_id = 3;
+}
+
+message Candidate {
+    string target_device_id = 1;
+    string candidate = 2;
+    optional string from_device_id = 3;
+}
+
+message MailboxPush {
+    bytes payload = 1;
+}
+
+message ErrorMessage {
+    string message = 1;
+}
+
+message DeviceListResponse {
+    repeated DeviceInfo devices = 1;
+}
+
+message DeviceInfo {
+    string id = 1;
+    string public_key = 2;
+    optional string name = 3;
+    string last_active = 4;
+    uint32 protocol_version = 5;
+}
+
+message RegisterDeviceRequest {
+    string identity_id = 1;
+    string public_key = 2;
+    optional string name = 3;
+    uint32 protocol_version = 4;
+}
+
+message RegisterDeviceResponse {
+    string id = 1;
+}
+
+message RegisterIdentityRequest {
+    string username = 1;
+    string root_public_key = 2;
+    uint64 pow_nonce = 3;
+}
+
+message RegisterIdentityResponse {
+    string id = 1;
+}
+
+message MailboxEnqueueRequest {
+    string target_device_id = 1;
+    bytes payload = 2;
+}
+
+message MailboxEntry {
+    string id = 1;
+    bytes payload = 2;
+    string created_at = 3;
+}
+
+message MailboxResponse {
+    repeated MailboxEntry messages = 1;
+}
+
+message VaultInviteRequest {
+    string vault_id = 1;
+    string invitee_username = 2;
+    string role = 3;
+}
+
+message VaultInviteResponse {
+    string id = 1;
+    string vault_id = 2;
+    string inviter_username = 3;
+    string status = 4;
+    string created_at = 5;
+    string role = 6;
+}
+
+message VaultMemberResponse {
+    string user_id = 1;
+    string username = 2;
+    string role = 3;
+    string joined_at = 4;
+}
+
+message VaultInvitesList {
+    repeated VaultInviteResponse invites = 1;
+}
+
+message VaultMembersList {
+    repeated VaultMemberResponse members = 1;
+}
+
+message FriendRequest {
+    string target_username = 1;
+}
+
+message FriendResponse {
+    string username = 1;
+    string status = 2;
+    optional string last_active = 3;
+}
+
+message FriendsList {
+    repeated FriendResponse friends = 1;
+}
+
+message InitiatePairingRequest {
+    bytes message = 1;
+}
+
+message InitiatePairingResponse {
+    string session_id = 1;
+}
+
+message RespondPairingRequest {
+    bytes message = 1;
+}
+
+message RespondPairingResponse {
+    bytes message = 1;
+}
+
+message PairingPollResponse {
+    bytes message = 1;
+}
+
+message TurnResponse {
+    string username = 1;
+    string password = 2;
+    uint64 ttl = 3;
+    repeated string uris = 4;
+}
+
+message AuditLog {
+    string id = 1;
+    string event_type = 2;
+    optional string metadata = 3;
+    string created_at = 4;
+}
+
+message AuditLogsList {
+    repeated AuditLog logs = 1;
+}
+
+message ErrorResponse {
+    string message = 1;
+}

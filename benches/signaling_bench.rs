@@ -1,5 +1,5 @@
 use criterion::{Criterion, criterion_group, criterion_main};
-use indidus_proto::signaling::{Offer, SignalingMessage, signaling_message::Content};
+use indidus_relay_proto::signaling::{Offer, SignalingMessage, signaling_message::Content};
 use indidus_relay_signaling::{Config, server::AppState, signaling::route_message};
 use std::sync::Arc;
 use tokio::runtime::Runtime;

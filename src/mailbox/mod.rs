@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use indidus_proto::signaling::{MailboxEnqueueRequest, MailboxEntry, MailboxResponse};
+use indidus_relay_proto::signaling::{MailboxEnqueueRequest, MailboxEntry, MailboxResponse};
 use prost::Message;
 use std::sync::Arc;
 

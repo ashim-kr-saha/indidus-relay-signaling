@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signer, SigningKey};
-use indidus_proto::relay::UploadResponse;
-use indidus_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
+use indidus_relay_proto::relay::UploadResponse;
+use indidus_relay_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
 use prost::Message;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};

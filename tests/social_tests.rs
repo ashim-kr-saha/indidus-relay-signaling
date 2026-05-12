@@ -1,7 +1,7 @@
 mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
-use indidus_proto::signaling::{FriendRequest, FriendsList, RegisterIdentityRequest};
+use indidus_relay_proto::signaling::{FriendRequest, FriendsList, RegisterIdentityRequest};
 use prost::Message;
 use reqwest::{Client, StatusCode};
 use std::time::{SystemTime, UNIX_EPOCH};

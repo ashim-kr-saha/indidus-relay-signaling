@@ -2,7 +2,7 @@ mod common;
 use common::{TestServer, generate_signature, solve_pow};
 use ed25519_dalek::SigningKey;
 use futures::{SinkExt, StreamExt};
-use indidus_proto::signaling::{
+use indidus_relay_proto::signaling::{
     DeviceListResponse, Init, RegisterIdentityRequest, RegisterIdentityResponse, SignalingMessage,
     signaling_message::Content,
 };

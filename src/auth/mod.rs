@@ -6,7 +6,7 @@ use axum::{
 };
 use chrono::Utc;
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use indidus_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
+use indidus_relay_proto::signaling::{RegisterIdentityRequest, RegisterIdentityResponse};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 

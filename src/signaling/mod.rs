@@ -8,7 +8,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
-use indidus_proto::signaling::{
+use indidus_relay_proto::signaling::{
     Answer, Candidate, ErrorMessage, InitSuccess, MailboxPush, Offer, SignalingMessage,
     signaling_message::Content,
 };
@@ -190,7 +190,7 @@ async fn handle_signaling_message(
 
                         let _ = tx_clone
                             .send(SignalingMessage {
-                                content: Some(Content::Batch(indidus_proto::signaling::Batch {
+                                content: Some(Content::Batch(indidus_relay_proto::signaling::Batch {
                                     messages: batch,
                                 })),
                             })

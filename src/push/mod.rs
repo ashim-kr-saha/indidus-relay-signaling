@@ -6,7 +6,7 @@ use axum::{
 };
 use base64::prelude::*;
 use futures::stream::{self, Stream};
-use indidus_proto::signaling::{MailboxEntry, MailboxResponse};
+use indidus_relay_proto::signaling::{MailboxEntry, MailboxResponse};
 use prost::Message;
 use std::sync::Arc;
 use std::{convert::Infallible, time::Duration};

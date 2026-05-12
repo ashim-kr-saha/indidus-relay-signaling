@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use indidus_proto::signaling::{
+use indidus_relay_proto::signaling::{
     DeviceInfo, DeviceListResponse, RegisterDeviceRequest, RegisterDeviceResponse,
 };
 use prost::Message;

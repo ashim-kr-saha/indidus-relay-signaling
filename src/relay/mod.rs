@@ -43,7 +43,7 @@ pub async fn upload_share(
         .db_call(move |db| db.create_share(&body, Some(&id_clone), expires_at, max_views))
         .await?;
 
-    let response = indidus_proto::relay::UploadResponse { id };
+    let response = indidus_relay_proto::relay::UploadResponse { id };
     Ok((StatusCode::CREATED, Protobuf(response)))
 }
 

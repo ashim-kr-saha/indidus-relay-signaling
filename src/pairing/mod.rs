@@ -3,7 +3,7 @@ use axum::{
     extract::{Path, State},
     response::IntoResponse,
 };
-use indidus_proto::signaling::{
+use indidus_relay_proto::signaling::{
     InitiatePairingRequest, InitiatePairingResponse, PairingPollResponse, RespondPairingRequest,
     RespondPairingResponse,
 };

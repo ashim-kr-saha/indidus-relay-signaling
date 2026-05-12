@@ -5,7 +5,7 @@ use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
     response::IntoResponse,
 };
-use indidus_proto::signaling::{FriendRequest, FriendResponse, FriendsList};
+use indidus_relay_proto::signaling::{FriendRequest, FriendResponse, FriendsList};
 use prost::Message;
 use std::sync::Arc;
 
